@@ -36,6 +36,7 @@ export interface CocUiApi {
     switchLocation(location: ViewLocation): Promise<void>;
     showView(id: string, options?: ShowViewOptions): Promise<void>;
     closeContainer(id: string): Promise<void>;
+    toggleTreeItem(id: string): Promise<void>;
     openLocation(uri: string, line: number, character: number): Promise<void>;
 }
 export declare function activate(context: ExtensionContext): Promise<CocUiApi>;

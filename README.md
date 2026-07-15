@@ -28,4 +28,8 @@ Use `coc-ui.showContainer` to reveal the active view in a container and
 of selecting a VS Code view container from its workbench surface. Containers on
 distinct surfaces remain mounted concurrently.
 
+Tree views retain coc.nvim's native single-click behavior. When
+`coc-ui.mouse.enable` is enabled, right-clicking a tree item opens the actions
+provided by its `TreeDataProvider.resolveActions` implementation.
+
 This repository is under local development and is not published yet.

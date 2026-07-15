@@ -78,6 +78,11 @@
           "type": "number",
           "default": 12,
           "minimum": 3
+        },
+        "coc-ui.mouse.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable native mouse navigation and context menus in Coc UI tree views."
         }
       }
     }

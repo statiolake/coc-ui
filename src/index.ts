@@ -51,6 +51,7 @@ export interface CocUiApi {
   switchLocation(location: ViewLocation): Promise<void>;
   showView(id: string, options?: ShowViewOptions): Promise<void>;
   closeContainer(id: string): Promise<void>;
+  toggleTreeItem(id: string): Promise<void>;
   openLocation(uri: string, line: number, character: number): Promise<void>;
 }
 
@@ -168,7 +169,7 @@ class CocUi implements CocUiApi, Disposable {
       await workspace.nvim.call("win_gotoid", [editorWindowId]);
     }
     await view.tree.show(this.splitCommand(container.location));
-    await this.installCloseKeymaps(view.containerId, view.tree.windowId);
+    await this.installViewKeymaps(id, view.containerId, view.tree.windowId);
     await this.resizeVisibleViews();
     container.activeViewId = id;
 
@@ -183,6 +184,16 @@ class CocUi implements CocUiApi, Disposable {
       await this.closeView(container.activeViewId);
     }
     container.activeViewId = undefined;
+  }
+
+  async toggleTreeItem(id: string): Promise<void> {
+    const view = this.requireView(id);
+    if (!view.tree.windowId) return;
+    await workspace.nvim.call("win_gotoid", [view.tree.windowId]);
+    const key = workspace
+      .getConfiguration("tree")
+      .get<string>("key.toggle", "t");
+    await workspace.nvim.input(key);
   }
 
   async openLocation(
@@ -307,11 +318,13 @@ class CocUi implements CocUiApi, Disposable {
   private async resizeVisibleViews(): Promise<void> {
     for (const view of this.views.values()) {
       const container = this.containers.get(view.containerId);
-      if (container) await this.resizeView(container.location, view.tree.windowId);
+      if (container)
+        await this.resizeView(container.location, view.tree.windowId);
     }
   }
 
-  private async installCloseKeymaps(
+  private async installViewKeymaps(
+    viewId: string,
     containerId: string,
     windowId: number | undefined,
   ): Promise<void> {
@@ -335,6 +348,67 @@ class CocUi implements CocUiApi, Disposable {
       rhs,
       options,
     ]);
+    if (workspace.getConfiguration("coc-ui").get("mouse.enable", true)) {
+      const contextMenu = `<Cmd>CocCommand coc-ui.contextMenu ${viewId}<CR>`;
+      await workspace.nvim.call("nvim_buf_set_keymap", [
+        bufferId,
+        "n",
+        "<RightMouse>",
+        contextMenu,
+        options,
+      ]);
+      await workspace.nvim.call("nvim_buf_set_keymap", [
+        bufferId,
+        "n",
+        "<RightRelease>",
+        "<Nop>",
+        options,
+      ]);
+    }
+  }
+
+  async showContextMenu(id: string): Promise<void> {
+    const view = this.requireView(id);
+    const windowId = view.tree.windowId;
+    if (!windowId) return;
+
+    const [mouseWindowId, line, column] = (await workspace.nvim.call(
+      "coc#ui#get_mouse",
+    )) as [number, number, number];
+    if (mouseWindowId !== windowId || line < 1) return;
+
+    await workspace.nvim.call("win_gotoid", [windowId]);
+    await workspace.nvim.call("nvim_win_set_cursor", [
+      windowId,
+      [line, Math.max(0, column - 1)],
+    ]);
+    const key = workspace
+      .getConfiguration("tree")
+      .get<string>("key.actions", "<Tab>");
+    await workspace.nvim.input(key);
+  }
+
+  async routeRightClick(): Promise<void> {
+    const [mouseWindowId] = (await workspace.nvim.call("coc#ui#get_mouse")) as [
+      number,
+      number,
+      number,
+    ];
+    const view = [...this.views.entries()].find(
+      ([, registered]) => registered.tree.windowId === mouseWindowId,
+    );
+    if (view) {
+      await this.showContextMenu(view[0]);
+      return;
+    }
+
+    const termcodes = (await workspace.nvim.call("nvim_replace_termcodes", [
+      "<RightMouse>",
+      true,
+      false,
+      true,
+    ])) as string;
+    await workspace.nvim.feedKeys(termcodes, "n", false);
   }
 }
 
@@ -351,6 +425,12 @@ export async function activate(context: ExtensionContext): Promise<CocUiApi> {
     commands.registerCommand("coc-ui.closeContainer", (id: unknown) => {
       return ui.closeContainer(String(id));
     }),
+    commands.registerCommand("coc-ui.contextMenu", (id: unknown) => {
+      return ui.showContextMenu(String(id));
+    }),
+    commands.registerCommand("coc-ui.routeRightMouse", () => {
+      return ui.routeRightClick();
+    }),
     commands.registerCommand("coc-ui.switchPrimarySidebar", () => {
       return ui.switchLocation("primarySidebar");
     }),
@@ -361,5 +441,16 @@ export async function activate(context: ExtensionContext): Promise<CocUiApi> {
       ui.switchLocation("panel"),
     ),
   );
+  if (workspace.getConfiguration("coc-ui").get("mouse.enable", true)) {
+    workspace.nvim.setKeymap(
+      "n",
+      "<RightMouse>",
+      "<Cmd>CocCommand coc-ui.routeRightMouse<CR>",
+      { noremap: true, silent: true, nowait: true },
+    );
+    context.subscriptions.push(
+      Disposable.create(() => workspace.nvim.deleteKeymap("n", "<RightMouse>")),
+    );
+  }
   return ui;
 }
