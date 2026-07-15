@@ -7,112 +7,359 @@ import {
   commands,
   window,
   workspace,
-} from 'coc.nvim';
+} from "coc.nvim";
 
-export type ViewPlacement = 'sidebar' | 'panel';
+/**
+ * Mirrors VS Code's workbench surfaces. A container occupies one surface and
+ * switches between the views registered to it.
+ */
+export type ViewLocation = "primarySidebar" | "secondarySidebar" | "panel";
+
+/**
+ * Coc equivalent of VS Code's ViewContainerLocation. The string values are
+ * intentionally stable because they are also suitable for configuration.
+ */
+export const ViewContainerLocation = {
+  Sidebar: "primarySidebar",
+  AuxiliaryBar: "secondarySidebar",
+  Panel: "panel",
+} as const;
+
+export interface ViewContainerRegistration {
+  id: string;
+  title: string;
+  location?: ViewLocation;
+  order?: number;
+}
 
 export interface ViewRegistration<T> extends TreeViewOptions<T> {
   id: string;
+  containerId: string;
   title?: string;
   description?: string;
-  placement?: ViewPlacement;
+  order?: number;
+}
+
+export interface ShowViewOptions {
+  focus?: boolean;
 }
 
 export interface CocUiApi {
-  registerView<T>(registration: ViewRegistration<T>): Disposable;
-  showView(id: string): Promise<void>;
-  closeView(): Promise<void>;
+  registerViewContainer(registration: ViewContainerRegistration): Disposable;
+  createTreeView<T>(registration: ViewRegistration<T>): TreeView<T>;
+  showContainer(id: string, options?: ShowViewOptions): Promise<void>;
+  switchLocation(location: ViewLocation): Promise<void>;
+  showView(id: string, options?: ShowViewOptions): Promise<void>;
+  closeContainer(id: string): Promise<void>;
   openLocation(uri: string, line: number, character: number): Promise<void>;
 }
 
 type RegisteredView = {
-  placement: ViewPlacement;
+  containerId: string;
+  order: number;
   tree: TreeView<unknown>;
+  disposables: Disposable[];
 };
 
-class ViewContainer implements CocUiApi, Disposable {
-  private readonly views = new Map<string, RegisteredView>();
-  private activeViewId: string | undefined;
-  private targetWindowId: number | undefined;
+type RegisteredContainer = {
+  title: string;
+  location: ViewLocation;
+  order: number;
+  viewIds: string[];
+  activeViewId: string | undefined;
+};
 
-  registerView<T>(registration: ViewRegistration<T>): Disposable {
+class CocUi implements CocUiApi, Disposable {
+  private readonly containers = new Map<string, RegisteredContainer>();
+  private readonly views = new Map<string, RegisteredView>();
+  private editorWindowId: number | undefined;
+
+  registerViewContainer(registration: ViewContainerRegistration): Disposable {
+    if (this.containers.has(registration.id)) {
+      throw new Error(`View container already registered: ${registration.id}`);
+    }
+
+    this.containers.set(registration.id, {
+      title: registration.title,
+      location: registration.location ?? "primarySidebar",
+      order: registration.order ?? 0,
+      viewIds: [],
+      activeViewId: undefined,
+    });
+
+    return Disposable.create(() => {
+      void this.closeContainer(registration.id);
+      this.containers.delete(registration.id);
+    });
+  }
+
+  createTreeView<T>(registration: ViewRegistration<T>): TreeView<T> {
     if (this.views.has(registration.id)) {
       throw new Error(`View already registered: ${registration.id}`);
     }
 
-    const tree = window.createTreeView(registration.id, registration);
+    const container = this.containers.get(registration.containerId);
+    if (!container) {
+      throw new Error(`Unknown view container: ${registration.containerId}`);
+    }
+
+    const tree = window.createTreeView(registration.id, {
+      ...registration,
+      bufhidden: registration.bufhidden ?? "hide",
+    });
     tree.title = registration.title ?? registration.id;
     tree.description = registration.description;
-    this.views.set(registration.id, {
-      placement: registration.placement ?? 'sidebar',
+
+    const registered: RegisteredView = {
+      containerId: registration.containerId,
+      order: registration.order ?? 0,
       tree: tree as TreeView<unknown>,
-    });
+      disposables: [],
+    };
+    registered.disposables.push(
+      tree.onDidChangeVisibility(({ visible }) => {
+        if (!visible && container.activeViewId === registration.id) {
+          container.activeViewId = undefined;
+        }
+      }),
+    );
 
-    return Disposable.create(() => {
-      if (this.activeViewId === registration.id) this.activeViewId = undefined;
-      this.views.delete(registration.id);
-      tree.dispose();
-    });
+    this.views.set(registration.id, registered);
+    container.viewIds.push(registration.id);
+    this.sortViews(container);
+
+    return tree;
   }
 
-  async showView(id: string): Promise<void> {
-    const view = this.views.get(id);
-    if (!view) throw new Error(`Unknown view: ${id}`);
+  async showContainer(id: string, options?: ShowViewOptions): Promise<void> {
+    const container = this.requireContainer(id);
+    const viewId = container.activeViewId ?? container.viewIds[0];
+    if (!viewId) {
+      throw new Error(`View container has no views: ${id}`);
+    }
+    await this.showView(viewId, options);
+  }
 
-    const currentWindowId = (await workspace.nvim.call('win_getid')) as number;
-    const activeWindowId = this.activeViewId
-      ? this.views.get(this.activeViewId)?.tree.windowId
-      : undefined;
-    if (currentWindowId !== activeWindowId) this.targetWindowId = currentWindowId;
+  async switchLocation(location: ViewLocation): Promise<void> {
+    const containers = [...this.containers.entries()]
+      .filter(([, container]) => container.location === location)
+      .sort(([, left], [, right]) => left.order - right.order);
+    if (!containers.length) return;
 
-    if (activeWindowId && activeWindowId !== view.tree.windowId) {
-      await workspace.nvim.call('nvim_win_close', [activeWindowId, true]);
+    const index = await window.showQuickpick(
+      containers.map(([id, container]) => `${container.title} (${id})`),
+      "Select view container",
+    );
+    if (index >= 0) await this.showContainer(containers[index][0]);
+  }
+
+  async showView(id: string, options: ShowViewOptions = {}): Promise<void> {
+    const view = this.requireView(id);
+    const container = this.requireContainer(view.containerId);
+    const editorWindowId = await this.findEditorWindow();
+    if (editorWindowId) this.editorWindowId = editorWindowId;
+
+    const activeViewId = container.activeViewId;
+    if (activeViewId && activeViewId !== id) {
+      await this.closeView(activeViewId);
     }
 
-    await view.tree.show(this.splitCommand(view.placement));
-    this.activeViewId = id;
-  }
-
-  async closeView(): Promise<void> {
-    if (!this.activeViewId) return;
-    const winid = this.views.get(this.activeViewId)?.tree.windowId;
-    if (winid) await workspace.nvim.call('nvim_win_close', [winid, true]);
-    this.activeViewId = undefined;
-  }
-
-  async openLocation(uri: string, line: number, character: number): Promise<void> {
-    if (this.targetWindowId) {
-      const valid = (await workspace.nvim.call('nvim_win_is_valid', [this.targetWindowId])) as boolean;
-      if (valid) await workspace.nvim.call('win_gotoid', [this.targetWindowId]);
+    if (editorWindowId) {
+      await workspace.nvim.call("win_gotoid", [editorWindowId]);
     }
-    await workspace.jumpTo(uri, Position.create(line, character), 'edit');
+    await view.tree.show(this.splitCommand(container.location));
+    await this.installCloseKeymaps(view.containerId, view.tree.windowId);
+    await this.resizeVisibleViews();
+    container.activeViewId = id;
+
+    if (options.focus === false && editorWindowId) {
+      await workspace.nvim.call("win_gotoid", [editorWindowId]);
+    }
+  }
+
+  async closeContainer(id: string): Promise<void> {
+    const container = this.requireContainer(id);
+    if (container.activeViewId) {
+      await this.closeView(container.activeViewId);
+    }
+    container.activeViewId = undefined;
+  }
+
+  async openLocation(
+    uri: string,
+    line: number,
+    character: number,
+  ): Promise<void> {
+    const editorWindowId = await this.findEditorWindow();
+    if (editorWindowId) {
+      this.editorWindowId = editorWindowId;
+      await workspace.nvim.call("win_gotoid", [editorWindowId]);
+    }
+    await workspace.jumpTo(uri, Position.create(line, character), "edit");
   }
 
   dispose(): void {
-    for (const view of this.views.values()) view.tree.dispose();
+    for (const view of this.views.values()) {
+      for (const disposable of view.disposables) disposable.dispose();
+      view.tree.dispose();
+    }
     this.views.clear();
+    this.containers.clear();
   }
 
-  private splitCommand(placement: ViewPlacement): string {
-    const config = workspace.getConfiguration('coc-ui');
-    if (placement === 'panel') {
-      const height = Math.max(3, config.get<number>('panel.height', 12));
+  private requireContainer(id: string): RegisteredContainer {
+    const container = this.containers.get(id);
+    if (!container) throw new Error(`Unknown view container: ${id}`);
+    return container;
+  }
+
+  private requireView(id: string): RegisteredView {
+    const view = this.views.get(id);
+    if (!view) throw new Error(`Unknown view: ${id}`);
+    return view;
+  }
+
+  private sortViews(container: RegisteredContainer): void {
+    container.viewIds.sort((left, right) => {
+      return this.requireView(left).order - this.requireView(right).order;
+    });
+  }
+
+  private async closeView(id: string): Promise<void> {
+    const winid = this.views.get(id)?.tree.windowId;
+    if (!winid) return;
+    const valid = (await workspace.nvim.call("nvim_win_is_valid", [
+      winid,
+    ])) as boolean;
+    if (valid) await workspace.nvim.call("nvim_win_close", [winid, true]);
+  }
+
+  private async findEditorWindow(): Promise<number | undefined> {
+    const viewWindowIds = new Set(
+      [...this.views.values()]
+        .map((view) => view.tree.windowId)
+        .filter((winid): winid is number => winid != null),
+    );
+    const currentWindowId = (await workspace.nvim.call("win_getid")) as number;
+    if (!viewWindowIds.has(currentWindowId)) return currentWindowId;
+
+    if (this.editorWindowId) {
+      const valid = (await workspace.nvim.call("nvim_win_is_valid", [
+        this.editorWindowId,
+      ])) as boolean;
+      if (valid) return this.editorWindowId;
+    }
+
+    const windowIds = (await workspace.nvim.call("nvim_list_wins")) as number[];
+    return windowIds.find((winid) => !viewWindowIds.has(winid));
+  }
+
+  private splitCommand(location: ViewLocation): string {
+    const config = workspace.getConfiguration("coc-ui");
+    if (location === "panel") {
+      const height = Math.max(3, config.get<number>("panel.height", 12));
       return `botright ${height}split`;
     }
 
-    const width = Math.max(10, config.get<number>('sidebar.width', 40));
-    const side = config.get<'left' | 'right'>('sidebar.position', 'left');
-    return `${side === 'left' ? 'topleft' : 'botright'} ${width}vsplit`;
+    const primary = location === "primarySidebar";
+    const position = config.get<"left" | "right">(
+      primary ? "primarySidebar.position" : "secondarySidebar.position",
+      primary ? "left" : "right",
+    );
+    const width = Math.max(
+      10,
+      config.get<number>(
+        primary ? "primarySidebar.width" : "secondarySidebar.width",
+        40,
+      ),
+    );
+    return `${position === "left" ? "topleft" : "botright"} ${width}vsplit`;
+  }
+
+  private async resizeView(
+    location: ViewLocation,
+    windowId: number | undefined,
+  ): Promise<void> {
+    if (!windowId) return;
+    const valid = (await workspace.nvim.call("nvim_win_is_valid", [
+      windowId,
+    ])) as boolean;
+    if (!valid) return;
+
+    const config = workspace.getConfiguration("coc-ui");
+    if (location === "panel") {
+      const height = Math.max(3, config.get<number>("panel.height", 12));
+      await workspace.nvim.call("nvim_win_set_height", [windowId, height]);
+      return;
+    }
+
+    const primary = location === "primarySidebar";
+    const width = Math.max(
+      10,
+      config.get<number>(
+        primary ? "primarySidebar.width" : "secondarySidebar.width",
+        40,
+      ),
+    );
+    await workspace.nvim.call("nvim_win_set_width", [windowId, width]);
+  }
+
+  private async resizeVisibleViews(): Promise<void> {
+    for (const view of this.views.values()) {
+      const container = this.containers.get(view.containerId);
+      if (container) await this.resizeView(container.location, view.tree.windowId);
+    }
+  }
+
+  private async installCloseKeymaps(
+    containerId: string,
+    windowId: number | undefined,
+  ): Promise<void> {
+    if (!windowId) return;
+    const bufferId = (await workspace.nvim.call("nvim_win_get_buf", [
+      windowId,
+    ])) as number;
+    const rhs = `<Cmd>CocCommand coc-ui.closeContainer ${containerId}<CR>`;
+    const options = { noremap: true, silent: true, nowait: true };
+    await workspace.nvim.call("nvim_buf_set_keymap", [
+      bufferId,
+      "n",
+      "q",
+      rhs,
+      options,
+    ]);
+    await workspace.nvim.call("nvim_buf_set_keymap", [
+      bufferId,
+      "n",
+      "<Esc>",
+      rhs,
+      options,
+    ]);
   }
 }
 
 export async function activate(context: ExtensionContext): Promise<CocUiApi> {
-  const container = new ViewContainer();
+  const ui = new CocUi();
   context.subscriptions.push(
-    container,
-    commands.registerCommand('coc-ui.show', (id: unknown) => container.showView(String(id))),
-    commands.registerCommand('coc-ui.close', () => container.closeView())
+    ui,
+    commands.registerCommand("coc-ui.showContainer", (id: unknown) => {
+      return ui.showContainer(String(id));
+    }),
+    commands.registerCommand("coc-ui.showView", (id: unknown) => {
+      return ui.showView(String(id));
+    }),
+    commands.registerCommand("coc-ui.closeContainer", (id: unknown) => {
+      return ui.closeContainer(String(id));
+    }),
+    commands.registerCommand("coc-ui.switchPrimarySidebar", () => {
+      return ui.switchLocation("primarySidebar");
+    }),
+    commands.registerCommand("coc-ui.switchSecondarySidebar", () => {
+      return ui.switchLocation("secondarySidebar");
+    }),
+    commands.registerCommand("coc-ui.switchPanel", () =>
+      ui.switchLocation("panel"),
+    ),
   );
-  return container;
+  return ui;
 }
-
