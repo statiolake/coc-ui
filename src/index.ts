@@ -925,6 +925,10 @@ class CocUi implements CocUiApi, Disposable {
       surface.activeContainerId ?? "",
     );
     if (activeLine >= 0) {
+      await workspace.nvim.call("nvim_win_set_cursor", [
+        activityBar.winid,
+        [activeLine + 1, 0],
+      ]);
       await workspace.nvim.call("nvim_buf_add_highlight", [
         activityBar.bufnr,
         -1,
