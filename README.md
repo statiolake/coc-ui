@@ -69,6 +69,10 @@ surface removes its windows while preserving the active container, TreeView
 buffers, expansion state, and cursor position. Showing it restores that state;
 only an explicit container close discards the active selection.
 
+Locations can also be shown before a ViewContainer is contributed. In that
+state coc-ui renders an empty workbench surface that can receive future views
+instead of treating the location as unavailable.
+
 View actions populate the tree item's context menu. Optional view-local keys
 invoke the same action with the element under the cursor, keeping commands,
 menus, and keybindings as one declaration.

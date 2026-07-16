@@ -97,9 +97,15 @@ type ActivityBarState = {
   containerIds: string[];
 };
 
+type PlaceholderState = {
+  bufnr: number;
+  winid: number;
+};
+
 type SurfaceState = {
   activeContainerId?: string;
   activityBar?: ActivityBarState;
+  placeholder?: PlaceholderState;
   visible: boolean;
 };
 
@@ -249,6 +255,7 @@ class CocUi implements CocUiApi, Disposable {
     surface.activeContainerId = id;
     surface.visible = true;
 
+    await this.closePlaceholder(container.location);
     await this.ensureActivityBar(container.location);
     await this.mountContainer(id);
     await this.layoutContainer(id);
@@ -284,6 +291,7 @@ class CocUi implements CocUiApi, Disposable {
     const containerId =
       surface.activeContainerId ?? this.firstContainerId(location);
     if (containerId) await this.showContainer(containerId);
+    else await this.showEmptyLocation(location);
   }
 
   async hideLocation(location: ViewLocation): Promise<void> {
@@ -291,12 +299,20 @@ class CocUi implements CocUiApi, Disposable {
     if (surface.activeContainerId) {
       await this.unmountContainer(surface.activeContainerId);
     }
+    await this.closePlaceholder(location);
     surface.visible = false;
     await this.closeActivityBar(location);
   }
 
   async toggleLocation(location: ViewLocation): Promise<void> {
     const surface = this.surface(location);
+    if (
+      surface.visible &&
+      !surface.activeContainerId &&
+      !(await this.isValidWindow(surface.placeholder?.winid))
+    ) {
+      surface.visible = false;
+    }
     if (surface.visible) await this.hideLocation(location);
     else await this.showLocation(location);
   }
@@ -314,6 +330,7 @@ class CocUi implements CocUiApi, Disposable {
   async closeLocation(location: ViewLocation): Promise<void> {
     const containerId = this.surface(location).activeContainerId;
     if (containerId) await this.closeContainer(containerId);
+    else await this.hideLocation(location);
   }
 
   async toggleViewAtMouse(id: string): Promise<void> {
@@ -401,6 +418,13 @@ class CocUi implements CocUiApi, Disposable {
         workspace.nvim.call(
           "nvim_buf_delete",
           [surface.activityBar.bufnr, { force: true }],
+          true,
+        );
+      }
+      if (surface.placeholder) {
+        workspace.nvim.call(
+          "nvim_buf_delete",
+          [surface.placeholder.bufnr, { force: true }],
           true,
         );
       }
@@ -527,6 +551,8 @@ class CocUi implements CocUiApi, Disposable {
     for (const surface of this.surfaces.values()) {
       if (surface.activityBar?.winid)
         uiWindowIds.add(surface.activityBar.winid);
+      if (surface.placeholder?.winid)
+        uiWindowIds.add(surface.placeholder.winid);
     }
     const currentWindowId = (await workspace.nvim.call("win_getid")) as number;
     if (!uiWindowIds.has(currentWindowId)) return currentWindowId;
@@ -562,6 +588,82 @@ class CocUi implements CocUiApi, Disposable {
       ),
     );
     return `${position === "left" ? "leftabove" : "rightbelow"} ${width}vsplit`;
+  }
+
+  private async showEmptyLocation(location: ViewLocation): Promise<void> {
+    const surface = this.surface(location);
+    if (await this.isValidWindow(surface.placeholder?.winid)) {
+      surface.visible = true;
+      await workspace.nvim.call("win_gotoid", [surface.placeholder?.winid]);
+      return;
+    }
+
+    const editorWindowId = await this.findEditorWindow();
+    if (!editorWindowId) return;
+    this.editorWindowId = editorWindowId;
+    await workspace.nvim.call("win_gotoid", [editorWindowId]);
+    await workspace.nvim.command(this.splitCommand(location));
+
+    const winid = (await workspace.nvim.call("win_getid")) as number;
+    const bufnr = (await workspace.nvim.call("nvim_create_buf", [
+      false,
+      true,
+    ])) as number;
+    await workspace.nvim.call("nvim_buf_set_name", [
+      bufnr,
+      `coc-ui-placeholder://${location}`,
+    ]);
+    await workspace.nvim.call("nvim_win_set_buf", [winid, bufnr]);
+    for (const [name, value] of [
+      ["buftype", "nofile"],
+      ["bufhidden", "wipe"],
+      ["swapfile", false],
+      ["filetype", "cocui-placeholder"],
+    ] as const) {
+      await workspace.nvim.call("nvim_buf_set_option", [bufnr, name, value]);
+    }
+    for (const [name, value] of [
+      ["number", false],
+      ["relativenumber", false],
+      ["wrap", false],
+      ["winfixwidth", location !== "panel"],
+      ["winfixheight", location === "panel"],
+      ["signcolumn", "no"],
+      ["statusline", "%!repeat('─',winwidth(g:statusline_winid))"],
+    ] as const) {
+      await workspace.nvim.call("nvim_win_set_option", [winid, name, value]);
+    }
+
+    const rhs = `<Cmd>CocCommand coc-ui.hideLocation ${location}<CR>`;
+    const options = { noremap: true, silent: true, nowait: true };
+    for (const key of ["q", "<Esc>"]) {
+      await workspace.nvim.call("nvim_buf_set_keymap", [
+        bufnr,
+        "n",
+        key,
+        rhs,
+        options,
+      ]);
+    }
+
+    surface.placeholder = { bufnr, winid };
+    surface.visible = true;
+  }
+
+  private async closePlaceholder(location: ViewLocation): Promise<void> {
+    const surface = this.surface(location);
+    const placeholder = surface.placeholder;
+    if (!placeholder) return;
+    surface.placeholder = undefined;
+    const valid = (await workspace.nvim.call("nvim_buf_is_valid", [
+      placeholder.bufnr,
+    ])) as boolean;
+    if (valid) {
+      await workspace.nvim.call("nvim_buf_delete", [
+        placeholder.bufnr,
+        { force: true },
+      ]);
+    }
   }
 
   private stackSplitCommand(location: ViewLocation): string {
