@@ -1,9 +1,7 @@
 import { Disposable, ExtensionContext, TreeView, TreeViewOptions } from "coc.nvim";
-/**
- * Mirrors VS Code's workbench surfaces. A container occupies one surface and
- * switches between the views registered to it.
- */
+/** Mirrors VS Code's workbench surfaces. */
 export type ViewLocation = "primarySidebar" | "secondarySidebar" | "panel";
+export type ViewVisibility = "visible" | "collapsed" | "hidden";
 /**
  * Coc equivalent of VS Code's ViewContainerLocation. The string values are
  * intentionally stable because they are also suitable for configuration.
@@ -16,15 +14,19 @@ export declare const ViewContainerLocation: {
 export interface ViewContainerRegistration {
     id: string;
     title: string;
+    icon?: string;
     location?: ViewLocation;
     order?: number;
 }
-export interface ViewRegistration<T> extends TreeViewOptions<T> {
+export interface ViewRegistration {
     id: string;
     containerId: string;
-    title?: string;
-    description?: string;
+    name: string;
+    contextualTitle?: string;
     order?: number;
+    visibility?: ViewVisibility;
+}
+export interface CocTreeViewOptions<T> extends TreeViewOptions<T> {
     actions?: ViewAction<T>[];
 }
 export interface ViewAction<T> {
@@ -39,11 +41,13 @@ export interface ShowViewOptions {
 }
 export interface CocUiApi {
     registerViewContainer(registration: ViewContainerRegistration): Disposable;
-    createTreeView<T>(registration: ViewRegistration<T>): TreeView<T>;
+    registerView(registration: ViewRegistration): Disposable;
+    createTreeView<T>(id: string, options: CocTreeViewOptions<T>): TreeView<T>;
     showContainer(id: string, options?: ShowViewOptions): Promise<void>;
     switchLocation(location: ViewLocation): Promise<void>;
     showView(id: string, options?: ShowViewOptions): Promise<void>;
     closeContainer(id: string): Promise<void>;
+    toggleView(id: string): Promise<void>;
     toggleTreeItem(id: string): Promise<void>;
     openLocation(uri: string, line: number, character: number): Promise<void>;
 }

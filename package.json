@@ -32,6 +32,18 @@
         "title": "Close a Coc UI view container"
       },
       {
+        "command": "coc-ui.closeLocation",
+        "title": "Close a Coc UI workbench surface"
+      },
+      {
+        "command": "coc-ui.toggleView",
+        "title": "Expand or Collapse a Coc UI view"
+      },
+      {
+        "command": "coc-ui.selectActivityBar",
+        "title": "Select an Activity Bar view container"
+      },
+      {
         "command": "coc-ui.switchPrimarySidebar",
         "title": "Switch Primary Sidebar View Container"
       },
@@ -78,6 +90,16 @@
           "type": "number",
           "default": 12,
           "minimum": 3
+        },
+        "coc-ui.activityBar.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show an activity bar for sidebar view containers."
+        },
+        "coc-ui.activityBar.width": {
+          "type": "number",
+          "default": 3,
+          "minimum": 2
         },
         "coc-ui.mouse.enable": {
           "type": "boolean",
