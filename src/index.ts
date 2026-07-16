@@ -113,6 +113,7 @@ class CocUi implements CocUiApi, Disposable {
   private readonly viewRegistrations = new Map<string, ViewRegistration>();
   private readonly views = new Map<string, RegisteredView>();
   private readonly surfaces = new Map<ViewLocation, SurfaceState>();
+  private readonly unmountingContainers = new Set<string>();
   private editorWindowId: number | undefined;
 
   constructor(private readonly context: ExtensionContext) {}
@@ -216,6 +217,11 @@ class CocUi implements CocUiApi, Disposable {
     this.views.set(id, registered);
     container.viewIds.push(id);
     this.sortViews(container);
+    registered.disposables.push(
+      tree.onDidChangeVisibility(({ visible }) => {
+        if (!visible) void this.onViewHidden(id);
+      }),
+    );
 
     return tree;
   }
@@ -313,7 +319,7 @@ class CocUi implements CocUiApi, Disposable {
     const surface = this.surface(container.location);
     if (surface.activeContainerId === id) {
       surface.activeContainerId = undefined;
-      await this.renderActivityBar(container.location);
+      await this.closeActivityBar(container.location);
     }
   }
 
@@ -442,12 +448,32 @@ class CocUi implements CocUiApi, Disposable {
 
   private async unmountContainer(id: string): Promise<void> {
     const container = this.requireContainer(id);
-    for (const view of this.containerViews(container)) {
-      const winid = view.tree.windowId;
-      if (await this.isValidWindow(winid)) {
-        await workspace.nvim.call("nvim_win_close", [winid, true]);
+    this.unmountingContainers.add(id);
+    try {
+      for (const view of this.containerViews(container)) {
+        const winid = view.tree.windowId;
+        if (await this.isValidWindow(winid)) {
+          await workspace.nvim.call("nvim_win_close", [winid, true]);
+        }
       }
+    } finally {
+      this.unmountingContainers.delete(id);
     }
+  }
+
+  private async onViewHidden(id: string): Promise<void> {
+    const view = this.views.get(id);
+    if (!view || this.unmountingContainers.has(view.containerId)) return;
+    const container = this.containers.get(view.containerId);
+    if (!container) return;
+    const surface = this.surface(container.location);
+    if (surface.activeContainerId !== view.containerId) return;
+
+    for (const sibling of this.containerViews(container)) {
+      if (await this.isValidWindow(sibling.tree.windowId)) return;
+    }
+    surface.activeContainerId = undefined;
+    await this.closeActivityBar(container.location);
   }
 
   private async isValidWindow(winid: number | undefined): Promise<boolean> {
@@ -698,6 +724,22 @@ class CocUi implements CocUiApi, Disposable {
     ]);
     surface.activityBar = { bufnr, winid, containerIds: [] };
     await this.renderActivityBar(location);
+  }
+
+  private async closeActivityBar(location: ViewLocation): Promise<void> {
+    const surface = this.surface(location);
+    const activityBar = surface.activityBar;
+    if (!activityBar) return;
+    surface.activityBar = undefined;
+    const valid = (await workspace.nvim.call("nvim_buf_is_valid", [
+      activityBar.bufnr,
+    ])) as boolean;
+    if (valid) {
+      await workspace.nvim.call("nvim_buf_delete", [
+        activityBar.bufnr,
+        { force: true },
+      ]);
+    }
   }
 
   private async renderActivityBar(location: ViewLocation): Promise<void> {
