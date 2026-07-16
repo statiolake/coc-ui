@@ -19,8 +19,20 @@ const view = ui.createTreeView({
   containerId: "example",
   title: "Items",
   treeDataProvider,
+  actions: [
+    {
+      id: "example.rename",
+      title: "Rename",
+      keys: ["r"],
+      handler: (item) => item && rename(item),
+    },
+  ],
 });
 ```
+
+View actions populate the tree item's context menu. Optional view-local keys
+invoke the same action with the element under the cursor, keeping commands,
+menus, and keybindings as one declaration.
 
 Use `coc-ui.showContainer` to reveal the active view in a container and
 `coc-ui.showView` to switch to a particular view. `coc-ui.switchPrimarySidebar`,

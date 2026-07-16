@@ -2,6 +2,8 @@ import {
   Disposable,
   ExtensionContext,
   Position,
+  TreeDataProvider,
+  TreeItemAction,
   TreeView,
   TreeViewOptions,
   commands,
@@ -38,6 +40,15 @@ export interface ViewRegistration<T> extends TreeViewOptions<T> {
   title?: string;
   description?: string;
   order?: number;
+  actions?: ViewAction<T>[];
+}
+
+export interface ViewAction<T> {
+  id: string;
+  title: string;
+  keys?: string[];
+  when?: (element: T) => boolean;
+  handler: (element: T) => void | Promise<void>;
 }
 
 export interface ShowViewOptions {
@@ -69,6 +80,15 @@ type RegisteredContainer = {
   viewIds: string[];
   activeViewId: string | undefined;
 };
+
+interface KeymappableTreeView<T> extends TreeView<T> {
+  registerLocalKeymap(
+    mode: "n",
+    key: string,
+    handler: (element: T | undefined) => void | Promise<void>,
+    notify?: boolean,
+  ): void;
+}
 
 class CocUi implements CocUiApi, Disposable {
   private readonly containers = new Map<string, RegisteredContainer>();
@@ -104,29 +124,60 @@ class CocUi implements CocUiApi, Disposable {
       throw new Error(`Unknown view container: ${registration.containerId}`);
     }
 
-    const tree = window.createTreeView(registration.id, {
-      ...registration,
-      bufhidden: registration.bufhidden ?? "hide",
+    const {
+      id,
+      containerId,
+      title,
+      description,
+      order,
+      actions = [],
+      ...options
+    } = registration;
+    const treeDataProvider = withViewActions(options.treeDataProvider, actions);
+    const tree = window.createTreeView(id, {
+      ...options,
+      treeDataProvider,
+      bufhidden: options.bufhidden ?? "hide",
     });
-    tree.title = registration.title ?? registration.id;
-    tree.description = registration.description;
+    const keymappableTree = tree as KeymappableTreeView<T>;
+    if (typeof keymappableTree.registerLocalKeymap !== "function") {
+      throw new Error(
+        "Installed coc.nvim does not support TreeView keybindings",
+      );
+    }
+    for (const action of actions) {
+      for (const key of action.keys ?? []) {
+        keymappableTree.registerLocalKeymap(
+          "n",
+          key,
+          (element) => {
+            if (element && (!action.when || action.when(element))) {
+              return action.handler(element);
+            }
+          },
+          true,
+        );
+      }
+    }
+    tree.title = title ?? id;
+    tree.description = description;
 
     const registered: RegisteredView = {
-      containerId: registration.containerId,
-      order: registration.order ?? 0,
+      containerId,
+      order: order ?? 0,
       tree: tree as TreeView<unknown>,
       disposables: [],
     };
     registered.disposables.push(
       tree.onDidChangeVisibility(({ visible }) => {
-        if (!visible && container.activeViewId === registration.id) {
+        if (!visible && container.activeViewId === id) {
           container.activeViewId = undefined;
         }
       }),
     );
 
-    this.views.set(registration.id, registered);
-    container.viewIds.push(registration.id);
+    this.views.set(id, registered);
+    container.viewIds.push(id);
     this.sortViews(container);
 
     return tree;
@@ -410,6 +461,38 @@ class CocUi implements CocUiApi, Disposable {
     ])) as string;
     await workspace.nvim.feedKeys(termcodes, "n", false);
   }
+}
+
+function withViewActions<T>(
+  provider: TreeDataProvider<T>,
+  actions: ViewAction<T>[],
+): TreeDataProvider<T> {
+  if (!actions.length) return provider;
+
+  return {
+    onDidChangeTreeData: provider.onDidChangeTreeData,
+    getTreeItem: (element) => provider.getTreeItem(element),
+    getChildren: (element) => provider.getChildren(element),
+    getParent: provider.getParent
+      ? (element) => provider.getParent?.(element)
+      : undefined,
+    resolveTreeItem: provider.resolveTreeItem
+      ? (item, element, token) =>
+          provider.resolveTreeItem?.(item, element, token)
+      : undefined,
+    resolveActions: async (item, element) => {
+      const inherited = provider.resolveActions
+        ? ((await provider.resolveActions(item, element)) ?? [])
+        : [];
+      const contributed: TreeItemAction<T>[] = actions
+        .filter((action) => !action.when || action.when(element))
+        .map((action) => ({
+          title: action.title,
+          handler: action.handler,
+        }));
+      return [...inherited, ...contributed];
+    },
+  };
 }
 
 export async function activate(context: ExtensionContext): Promise<CocUiApi> {

@@ -25,6 +25,14 @@ export interface ViewRegistration<T> extends TreeViewOptions<T> {
     title?: string;
     description?: string;
     order?: number;
+    actions?: ViewAction<T>[];
+}
+export interface ViewAction<T> {
+    id: string;
+    title: string;
+    keys?: string[];
+    when?: (element: T) => boolean;
+    handler: (element: T) => void | Promise<void>;
 }
 export interface ShowViewOptions {
     focus?: boolean;
