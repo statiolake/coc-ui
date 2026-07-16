@@ -723,7 +723,7 @@ class CocUi implements CocUiApi, Disposable {
       ["wrap", false],
       ["winfixwidth", true],
       ["signcolumn", "no"],
-      ["statusline", " "],
+      ["statusline", "─".repeat(width)],
     ] as const) {
       await workspace.nvim.call("nvim_win_set_option", [winid, name, value]);
     }
