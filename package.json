@@ -1,6 +1,6 @@
 {
   "name": "@statiolake/coc-ui",
-  "version": "0.0.0-development",
+  "version": "0.1.0",
   "description": "VS Code-style view containers for coc.nvim extensions",
   "author": "statiolake",
   "license": "MIT",
@@ -134,5 +134,12 @@
   "bugs": {
     "url": "https://github.com/statiolake/coc-ui/issues"
   },
-  "homepage": "https://github.com/statiolake/coc-ui#readme"
+  "homepage": "https://github.com/statiolake/coc-ui#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/index.d.ts"
+  ]
 }
