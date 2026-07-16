@@ -36,6 +36,18 @@
         "title": "Close a Coc UI workbench surface"
       },
       {
+        "command": "coc-ui.togglePrimarySidebar",
+        "title": "Toggle Primary Sidebar"
+      },
+      {
+        "command": "coc-ui.toggleSecondarySidebar",
+        "title": "Toggle Secondary Sidebar"
+      },
+      {
+        "command": "coc-ui.togglePanel",
+        "title": "Toggle Panel"
+      },
+      {
         "command": "coc-ui.toggleView",
         "title": "Expand or Collapse a Coc UI view"
       },

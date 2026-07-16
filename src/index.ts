@@ -63,6 +63,9 @@ export interface CocUiApi {
   registerView(registration: ViewRegistration): Disposable;
   createTreeView<T>(id: string, options: CocTreeViewOptions<T>): TreeView<T>;
   showContainer(id: string, options?: ShowViewOptions): Promise<void>;
+  showLocation(location: ViewLocation): Promise<void>;
+  hideLocation(location: ViewLocation): Promise<void>;
+  toggleLocation(location: ViewLocation): Promise<void>;
   switchLocation(location: ViewLocation): Promise<void>;
   showView(id: string, options?: ShowViewOptions): Promise<void>;
   closeContainer(id: string): Promise<void>;
@@ -97,6 +100,7 @@ type ActivityBarState = {
 type SurfaceState = {
   activeContainerId?: string;
   activityBar?: ActivityBarState;
+  visible: boolean;
 };
 
 interface KeymappableTreeView<T> extends TreeView<T> {
@@ -243,6 +247,7 @@ class CocUi implements CocUiApi, Disposable {
       await this.unmountContainer(surface.activeContainerId);
     }
     surface.activeContainerId = id;
+    surface.visible = true;
 
     await this.ensureActivityBar(container.location);
     await this.mountContainer(id);
@@ -272,6 +277,28 @@ class CocUi implements CocUiApi, Disposable {
       "Select view container",
     );
     if (index >= 0) await this.showContainer(containers[index][0]);
+  }
+
+  async showLocation(location: ViewLocation): Promise<void> {
+    const surface = this.surface(location);
+    const containerId =
+      surface.activeContainerId ?? this.firstContainerId(location);
+    if (containerId) await this.showContainer(containerId);
+  }
+
+  async hideLocation(location: ViewLocation): Promise<void> {
+    const surface = this.surface(location);
+    if (surface.activeContainerId) {
+      await this.unmountContainer(surface.activeContainerId);
+    }
+    surface.visible = false;
+    await this.closeActivityBar(location);
+  }
+
+  async toggleLocation(location: ViewLocation): Promise<void> {
+    const surface = this.surface(location);
+    if (surface.visible) await this.hideLocation(location);
+    else await this.showLocation(location);
   }
 
   async selectActivityBar(location: ViewLocation): Promise<void> {
@@ -319,6 +346,7 @@ class CocUi implements CocUiApi, Disposable {
     const surface = this.surface(container.location);
     if (surface.activeContainerId === id) {
       surface.activeContainerId = undefined;
+      surface.visible = false;
       await this.closeActivityBar(container.location);
     }
   }
@@ -409,10 +437,16 @@ class CocUi implements CocUiApi, Disposable {
   private surface(location: ViewLocation): SurfaceState {
     let surface = this.surfaces.get(location);
     if (!surface) {
-      surface = {};
+      surface = { visible: false };
       this.surfaces.set(location, surface);
     }
     return surface;
+  }
+
+  private firstContainerId(location: ViewLocation): string | undefined {
+    return [...this.containers.entries()]
+      .filter(([, container]) => container.location === location)
+      .sort(([, left], [, right]) => left.order - right.order)[0]?.[0];
   }
 
   private async mountContainer(id: string): Promise<void> {
@@ -470,9 +504,12 @@ class CocUi implements CocUiApi, Disposable {
     if (surface.activeContainerId !== view.containerId) return;
 
     for (const sibling of this.containerViews(container)) {
-      if (await this.isValidWindow(sibling.tree.windowId)) return;
+      if (await this.isValidWindow(sibling.tree.windowId)) {
+        await this.layoutContainer(view.containerId);
+        return;
+      }
     }
-    surface.activeContainerId = undefined;
+    surface.visible = false;
     await this.closeActivityBar(container.location);
   }
 
@@ -719,7 +756,7 @@ class CocUi implements CocUiApi, Disposable {
       bufnr,
       "n",
       "q",
-      `<Cmd>CocCommand coc-ui.closeLocation ${location}<CR>`,
+      `<Cmd>CocCommand coc-ui.hideLocation ${location}<CR>`,
       options,
     ]);
     surface.activityBar = { bufnr, winid, containerIds: [] };
@@ -806,7 +843,8 @@ class CocUi implements CocUiApi, Disposable {
     const bufferId = (await workspace.nvim.call("nvim_win_get_buf", [
       windowId,
     ])) as number;
-    const rhs = `<Cmd>CocCommand coc-ui.closeContainer ${containerId}<CR>`;
+    const location = this.requireContainer(containerId).location;
+    const rhs = `<Cmd>CocCommand coc-ui.hideLocation ${location}<CR>`;
     const options = { noremap: true, silent: true, nowait: true };
     await workspace.nvim.call("nvim_buf_set_keymap", [
       bufferId,
@@ -947,6 +985,24 @@ export async function activate(context: ExtensionContext): Promise<CocUiApi> {
     }),
     commands.registerCommand("coc-ui.closeLocation", (location: unknown) => {
       return ui.closeLocation(String(location) as ViewLocation);
+    }),
+    commands.registerCommand("coc-ui.showLocation", (location: unknown) => {
+      return ui.showLocation(String(location) as ViewLocation);
+    }),
+    commands.registerCommand("coc-ui.hideLocation", (location: unknown) => {
+      return ui.hideLocation(String(location) as ViewLocation);
+    }),
+    commands.registerCommand("coc-ui.toggleLocation", (location: unknown) => {
+      return ui.toggleLocation(String(location) as ViewLocation);
+    }),
+    commands.registerCommand("coc-ui.togglePrimarySidebar", () => {
+      return ui.toggleLocation("primarySidebar");
+    }),
+    commands.registerCommand("coc-ui.toggleSecondarySidebar", () => {
+      return ui.toggleLocation("secondarySidebar");
+    }),
+    commands.registerCommand("coc-ui.togglePanel", () => {
+      return ui.toggleLocation("panel");
     }),
     commands.registerCommand("coc-ui.toggleView", (id: unknown) => {
       return ui.toggleView(String(id));

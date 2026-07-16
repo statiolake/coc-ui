@@ -44,6 +44,9 @@ export interface CocUiApi {
     registerView(registration: ViewRegistration): Disposable;
     createTreeView<T>(id: string, options: CocTreeViewOptions<T>): TreeView<T>;
     showContainer(id: string, options?: ShowViewOptions): Promise<void>;
+    showLocation(location: ViewLocation): Promise<void>;
+    hideLocation(location: ViewLocation): Promise<void>;
+    toggleLocation(location: ViewLocation): Promise<void>;
     switchLocation(location: ViewLocation): Promise<void>;
     showView(id: string, options?: ShowViewOptions): Promise<void>;
     closeContainer(id: string): Promise<void>;

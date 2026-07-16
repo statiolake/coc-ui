@@ -64,6 +64,11 @@ uses the VS Code shape: a stable View id followed by provider options.
 selects its container, expands that View, and focuses it without closing sibling
 Views. Use `za` or double-click a View title to collapse or expand it.
 
+Workbench surfaces have separate show/hide and close lifecycles. Hiding a
+surface removes its windows while preserving the active container, TreeView
+buffers, expansion state, and cursor position. Showing it restores that state;
+only an explicit container close discards the active selection.
+
 View actions populate the tree item's context menu. Optional view-local keys
 invoke the same action with the element under the cursor, keeping commands,
 menus, and keybindings as one declaration.
