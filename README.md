@@ -77,13 +77,13 @@ View actions populate the tree item's context menu. Optional view-local keys
 invoke the same action with the element under the cursor, keeping commands,
 menus, and keybindings as one declaration.
 
-`coc-ui.switchPrimarySidebar`, `coc-ui.switchSecondarySidebar`, and
-`coc-ui.switchPanel` provide command-driven container selection. Sidebar
+`ui.switchPrimarySidebar`, `ui.switchSecondarySidebar`, and
+`ui.switchPanel` provide command-driven container selection. Sidebar
 Activity Bar icons provide direct keyboard and mouse selection. Containers on
 distinct surfaces remain mounted concurrently.
 
 Tree views retain coc.nvim's native single-click behavior. When
-`coc-ui.mouse.enable` is enabled, right-clicking a tree item opens the actions
+`ui.mouse.enable` is enabled, right-clicking a tree item opens the actions
 provided by its `TreeDataProvider.resolveActions` implementation.
 
 View content currently uses coc.nvim's native TreeView renderer. coc-ui owns the

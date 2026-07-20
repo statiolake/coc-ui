@@ -569,7 +569,7 @@ class CocUi implements CocUiApi, Disposable {
   }
 
   private splitCommand(location: ViewLocation): string {
-    const config = workspace.getConfiguration("coc-ui");
+    const config = workspace.getConfiguration("ui");
     if (location === "panel") {
       const height = Math.max(3, config.get<number>("panel.height", 12));
       return `botright ${height}split`;
@@ -634,7 +634,7 @@ class CocUi implements CocUiApi, Disposable {
       await workspace.nvim.call("nvim_win_set_option", [winid, name, value]);
     }
 
-    const rhs = `<Cmd>CocCommand coc-ui.hideLocation ${location}<CR>`;
+    const rhs = `<Cmd>CocCommand ui.hideLocation ${location}<CR>`;
     const options = { noremap: true, silent: true, nowait: true };
     for (const key of ["q", "<Esc>"]) {
       await workspace.nvim.call("nvim_buf_set_keymap", [
@@ -681,7 +681,7 @@ class CocUi implements CocUiApi, Disposable {
     }
     if (!entries.length) return;
 
-    const config = workspace.getConfiguration("coc-ui");
+    const config = workspace.getConfiguration("ui");
     if (container.location === "panel") {
       const height = Math.max(3, config.get<number>("panel.height", 12));
       for (const [, winid] of entries) {
@@ -762,7 +762,7 @@ class CocUi implements CocUiApi, Disposable {
     if (location === "panel") return;
     if (
       !workspace
-        .getConfiguration("coc-ui")
+        .getConfiguration("ui")
         .get<boolean>("activityBar.enable", true)
     ) {
       return;
@@ -778,7 +778,7 @@ class CocUi implements CocUiApi, Disposable {
     if (!editorWindowId) return;
     await workspace.nvim.call("win_gotoid", [editorWindowId]);
 
-    const config = workspace.getConfiguration("coc-ui");
+    const config = workspace.getConfiguration("ui");
     const primary = location === "primarySidebar";
     const position = config.get<"left" | "right">(
       primary ? "primarySidebar.position" : "secondarySidebar.position",
@@ -832,7 +832,7 @@ class CocUi implements CocUiApi, Disposable {
     await workspace.nvim.call("nvim_win_set_width", [winid, width]);
 
     const options = { noremap: true, silent: true, nowait: true };
-    const select = `<Cmd>CocCommand coc-ui.selectActivityBar ${location}<CR>`;
+    const select = `<Cmd>CocCommand ui.selectActivityBar ${location}<CR>`;
     await workspace.nvim.call("nvim_buf_set_keymap", [
       bufnr,
       "n",
@@ -851,14 +851,14 @@ class CocUi implements CocUiApi, Disposable {
       bufnr,
       "n",
       "<RightMouse>",
-      `<Cmd>CocCommand coc-ui.switch${primary ? "PrimarySidebar" : "SecondarySidebar"}<CR>`,
+      `<Cmd>CocCommand ui.switch${primary ? "PrimarySidebar" : "SecondarySidebar"}<CR>`,
       options,
     ]);
     await workspace.nvim.call("nvim_buf_set_keymap", [
       bufnr,
       "n",
       "q",
-      `<Cmd>CocCommand coc-ui.hideLocation ${location}<CR>`,
+      `<Cmd>CocCommand ui.hideLocation ${location}<CR>`,
       options,
     ]);
     surface.activityBar = { bufnr, winid, containerIds: [] };
@@ -889,7 +889,7 @@ class CocUi implements CocUiApi, Disposable {
 
     const width = Math.max(
       2,
-      workspace.getConfiguration("coc-ui").get<number>("activityBar.width", 3),
+      workspace.getConfiguration("ui").get<number>("activityBar.width", 3),
     );
     await workspace.nvim.call("nvim_win_set_width", [activityBar.winid, width]);
 
@@ -950,7 +950,7 @@ class CocUi implements CocUiApi, Disposable {
       windowId,
     ])) as number;
     const location = this.requireContainer(containerId).location;
-    const rhs = `<Cmd>CocCommand coc-ui.hideLocation ${location}<CR>`;
+    const rhs = `<Cmd>CocCommand ui.hideLocation ${location}<CR>`;
     const options = { noremap: true, silent: true, nowait: true };
     await workspace.nvim.call("nvim_buf_set_keymap", [
       bufferId,
@@ -963,14 +963,14 @@ class CocUi implements CocUiApi, Disposable {
       bufferId,
       "n",
       "za",
-      `<Cmd>CocCommand coc-ui.toggleView ${viewId}<CR>`,
+      `<Cmd>CocCommand ui.toggleView ${viewId}<CR>`,
       options,
     ]);
     await workspace.nvim.call("nvim_buf_set_keymap", [
       bufferId,
       "n",
       "<2-LeftMouse>",
-      `<Cmd>CocCommand coc-ui.toggleViewAtMouse ${viewId}<CR>`,
+      `<Cmd>CocCommand ui.toggleViewAtMouse ${viewId}<CR>`,
       options,
     ]);
     await workspace.nvim.call("nvim_buf_set_keymap", [
@@ -980,8 +980,8 @@ class CocUi implements CocUiApi, Disposable {
       rhs,
       options,
     ]);
-    if (workspace.getConfiguration("coc-ui").get("mouse.enable", true)) {
-      const contextMenu = `<Cmd>CocCommand coc-ui.contextMenu ${viewId}<CR>`;
+    if (workspace.getConfiguration("ui").get("mouse.enable", true)) {
+      const contextMenu = `<Cmd>CocCommand ui.contextMenu ${viewId}<CR>`;
       await workspace.nvim.call("nvim_buf_set_keymap", [
         bufferId,
         "n",
@@ -1080,72 +1080,72 @@ export async function activate(context: ExtensionContext): Promise<CocUiApi> {
   const ui = new CocUi(context);
   context.subscriptions.push(
     ui,
-    commands.registerCommand("coc-ui.showContainer", (id: unknown) => {
+    commands.registerCommand("ui.showContainer", (id: unknown) => {
       return ui.showContainer(String(id));
     }),
-    commands.registerCommand("coc-ui.showView", (id: unknown) => {
+    commands.registerCommand("ui.showView", (id: unknown) => {
       return ui.showView(String(id));
     }),
-    commands.registerCommand("coc-ui.closeContainer", (id: unknown) => {
+    commands.registerCommand("ui.closeContainer", (id: unknown) => {
       return ui.closeContainer(String(id));
     }),
-    commands.registerCommand("coc-ui.closeLocation", (location: unknown) => {
+    commands.registerCommand("ui.closeLocation", (location: unknown) => {
       return ui.closeLocation(String(location) as ViewLocation);
     }),
-    commands.registerCommand("coc-ui.showLocation", (location: unknown) => {
+    commands.registerCommand("ui.showLocation", (location: unknown) => {
       return ui.showLocation(String(location) as ViewLocation);
     }),
-    commands.registerCommand("coc-ui.hideLocation", (location: unknown) => {
+    commands.registerCommand("ui.hideLocation", (location: unknown) => {
       return ui.hideLocation(String(location) as ViewLocation);
     }),
-    commands.registerCommand("coc-ui.toggleLocation", (location: unknown) => {
+    commands.registerCommand("ui.toggleLocation", (location: unknown) => {
       return ui.toggleLocation(String(location) as ViewLocation);
     }),
-    commands.registerCommand("coc-ui.togglePrimarySidebar", () => {
+    commands.registerCommand("ui.togglePrimarySidebar", () => {
       return ui.toggleLocation("primarySidebar");
     }),
-    commands.registerCommand("coc-ui.toggleSecondarySidebar", () => {
+    commands.registerCommand("ui.toggleSecondarySidebar", () => {
       return ui.toggleLocation("secondarySidebar");
     }),
-    commands.registerCommand("coc-ui.togglePanel", () => {
+    commands.registerCommand("ui.togglePanel", () => {
       return ui.toggleLocation("panel");
     }),
-    commands.registerCommand("coc-ui.toggleView", (id: unknown) => {
+    commands.registerCommand("ui.toggleView", (id: unknown) => {
       return ui.toggleView(String(id));
     }),
-    commands.registerCommand("coc-ui.toggleViewAtMouse", (id: unknown) => {
+    commands.registerCommand("ui.toggleViewAtMouse", (id: unknown) => {
       return ui.toggleViewAtMouse(String(id));
     }),
     commands.registerCommand(
-      "coc-ui.selectActivityBar",
+      "ui.selectActivityBar",
       (location: unknown) => {
         return ui.selectActivityBar(String(location) as ViewLocation);
       },
     ),
-    commands.registerCommand("coc-ui.contextMenu", (id: unknown) => {
+    commands.registerCommand("ui.contextMenu", (id: unknown) => {
       return ui.showContextMenu(String(id));
     }),
-    commands.registerCommand("coc-ui.routeRightMouse", () => {
+    commands.registerCommand("ui.routeRightMouse", () => {
       return ui.routeRightClick();
     }),
-    commands.registerCommand("coc-ui.switchPrimarySidebar", () => {
+    commands.registerCommand("ui.switchPrimarySidebar", () => {
       return ui.switchLocation("primarySidebar");
     }),
-    commands.registerCommand("coc-ui.switchSecondarySidebar", () => {
+    commands.registerCommand("ui.switchSecondarySidebar", () => {
       return ui.switchLocation("secondarySidebar");
     }),
-    commands.registerCommand("coc-ui.switchPanel", () =>
+    commands.registerCommand("ui.switchPanel", () =>
       ui.switchLocation("panel"),
     ),
   );
   await workspace.nvim.command(
     "highlight default link CocUiActivityBarActive CursorLine",
   );
-  if (workspace.getConfiguration("coc-ui").get("mouse.enable", true)) {
+  if (workspace.getConfiguration("ui").get("mouse.enable", true)) {
     workspace.nvim.setKeymap(
       "n",
       "<RightMouse>",
-      "<Cmd>CocCommand coc-ui.routeRightMouse<CR>",
+      "<Cmd>CocCommand ui.routeRightMouse<CR>",
       { noremap: true, silent: true, nowait: true },
     );
     context.subscriptions.push(
