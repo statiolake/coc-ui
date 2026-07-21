@@ -196,19 +196,27 @@ class CocUi implements CocUiApi, Disposable {
         "Installed coc.nvim does not support TreeView keybindings",
       );
     }
+    const actionsByKey = new Map<string, ViewAction<T>[]>();
     for (const action of actions) {
       for (const key of action.keys ?? []) {
-        keymappableTree.registerLocalKeymap(
-          "n",
-          key,
-          (element) => {
-            if (element && (!action.when || action.when(element))) {
-              return action.handler(element);
-            }
-          },
-          true,
-        );
+        const keyedActions = actionsByKey.get(key) ?? [];
+        keyedActions.push(action);
+        actionsByKey.set(key, keyedActions);
       }
+    }
+    for (const [key, keyedActions] of actionsByKey) {
+      keymappableTree.registerLocalKeymap(
+        "n",
+        key,
+        (element) => {
+          if (!element) return;
+          const action = keyedActions.find(
+            (candidate) => !candidate.when || candidate.when(element),
+          );
+          if (action) return action.handler(element);
+        },
+        true,
+      );
     }
     tree.title = registration.name;
 
