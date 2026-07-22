@@ -10,6 +10,7 @@ import {
   window,
   workspace,
 } from "coc.nvim";
+import { ListPicker, registerPickerCommands } from "./picker/list-picker";
 
 /** Mirrors VS Code's workbench surfaces. */
 export type ViewLocation = "primarySidebar" | "secondarySidebar" | "panel";
@@ -72,6 +73,7 @@ export interface CocUiApi {
   toggleView(id: string): Promise<void>;
   toggleTreeItem(id: string): Promise<void>;
   openLocation(uri: string, line: number, character: number): Promise<void>;
+  pickList(name: string, args?: string[]): Promise<void>;
 }
 
 type RegisteredView = {
@@ -125,6 +127,7 @@ class CocUi implements CocUiApi, Disposable {
   private readonly surfaces = new Map<ViewLocation, SurfaceState>();
   private readonly unmountingContainers = new Set<string>();
   private editorWindowId: number | undefined;
+  readonly listPicker = new ListPicker();
 
   constructor(private readonly context: ExtensionContext) {}
 
@@ -413,7 +416,12 @@ class CocUi implements CocUiApi, Disposable {
     await workspace.jumpTo(uri, Position.create(line, character), "edit");
   }
 
+  async pickList(name: string, args: string[] = []): Promise<void> {
+    await this.listPicker.show(name, args);
+  }
+
   dispose(): void {
+    this.listPicker.dispose();
     for (const view of this.views.values()) {
       for (const disposable of view.disposables) disposable.dispose();
       view.tree.dispose();
@@ -1088,12 +1096,18 @@ export async function activate(context: ExtensionContext): Promise<CocUiApi> {
   const ui = new CocUi(context);
   context.subscriptions.push(
     ui,
+    ...registerPickerCommands(ui.listPicker),
     commands.registerCommand("ui.showContainer", (id: unknown) => {
       return ui.showContainer(String(id));
     }),
     commands.registerCommand("ui.showView", (id: unknown) => {
       return ui.showView(String(id));
     }),
+    commands.registerCommand(
+      "ui.pickList",
+      (name: unknown, ...args: unknown[]) =>
+        ui.pickList(String(name), args.map(String)),
+    ),
     commands.registerCommand("ui.closeContainer", (id: unknown) => {
       return ui.closeContainer(String(id));
     }),

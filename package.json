@@ -117,6 +117,18 @@
           "type": "boolean",
           "default": true,
           "description": "Enable native mouse navigation and context menus in Coc UI tree views."
+        },
+        "ui.picker.maxItems": {
+          "type": "number",
+          "default": 10000,
+          "minimum": 100,
+          "description": "Maximum items retained by a floating picker producer."
+        },
+        "ui.picker.visibleItems": {
+          "type": "number",
+          "default": 200,
+          "minimum": 20,
+          "description": "Maximum items rendered around the current picker selection."
         }
       }
     }

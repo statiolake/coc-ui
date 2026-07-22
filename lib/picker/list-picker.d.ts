@@ -1,0 +1,35 @@
+import { Disposable } from "coc.nvim";
+export declare class ListPicker implements Disposable {
+    private state;
+    private source;
+    private args;
+    private items;
+    private visibleItems;
+    private selected;
+    private input;
+    private generation;
+    private tokenSource;
+    private task;
+    private pollTimer;
+    private renderTimer;
+    private filterTimer;
+    private limit;
+    private visibleLimit;
+    show(name: string, args?: string[]): Promise<void>;
+    close(): Promise<void>;
+    dispose(): void;
+    move(delta: number): Promise<void>;
+    accept(): Promise<void>;
+    private reload;
+    private push;
+    private scheduleFilter;
+    private applyFilter;
+    private cancelProducer;
+    private pollInput;
+    private scheduleRender;
+    private render;
+    private context;
+    private openWindows;
+    private installCommands;
+}
+export declare function registerPickerCommands(picker: ListPicker): Disposable[];
