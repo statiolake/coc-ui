@@ -256,32 +256,34 @@ class CocUi implements CocUiApi, Disposable {
       throw new Error(`View container has no views: ${id}`);
     }
 
-    const editorWindowId = await this.findEditorWindow();
-    if (editorWindowId) this.editorWindowId = editorWindowId;
+    await this.withRedrawSuppressed(async () => {
+      const editorWindowId = await this.findEditorWindow();
+      if (editorWindowId) this.editorWindowId = editorWindowId;
 
-    const surface = this.surface(container.location);
-    if (surface.activeContainerId && surface.activeContainerId !== id) {
-      await this.unmountContainer(surface.activeContainerId);
-    }
-    surface.activeContainerId = id;
-    surface.visible = true;
-
-    await this.closePlaceholder(container.location);
-    await this.ensureActivityBar(container.location);
-    await this.mountContainer(id);
-    await this.layoutContainer(id);
-    await this.renderActivityBar(container.location);
-
-    if (options?.focus !== false) {
-      const target =
-        visibleViews.find((view) => view.visibility === "visible") ??
-        visibleViews[0];
-      if (target?.tree.windowId) {
-        await workspace.nvim.call("win_gotoid", [target.tree.windowId]);
+      const surface = this.surface(container.location);
+      if (surface.activeContainerId && surface.activeContainerId !== id) {
+        await this.unmountContainer(surface.activeContainerId);
       }
-    } else if (editorWindowId) {
-      await workspace.nvim.call("win_gotoid", [editorWindowId]);
-    }
+      surface.activeContainerId = id;
+      surface.visible = true;
+
+      await this.closePlaceholder(container.location);
+      await this.ensureActivityBar(container.location);
+      await this.mountContainer(id);
+      await this.layoutContainer(id);
+      await this.renderActivityBar(container.location);
+
+      if (options?.focus !== false) {
+        const target =
+          visibleViews.find((view) => view.visibility === "visible") ??
+          visibleViews[0];
+        if (target?.tree.windowId) {
+          await workspace.nvim.call("win_gotoid", [target.tree.windowId]);
+        }
+      } else if (editorWindowId) {
+        await workspace.nvim.call("win_gotoid", [editorWindowId]);
+      }
+    });
   }
 
   async switchLocation(location: ViewLocation): Promise<void> {
@@ -462,6 +464,19 @@ class CocUi implements CocUiApi, Disposable {
 
   private viewStateKey(id: string): string {
     return `view.${id}.visibility`;
+  }
+
+  private async withRedrawSuppressed<T>(operation: () => Promise<T>): Promise<T> {
+    const lazyredraw = (await workspace.nvim.getOption(
+      "lazyredraw",
+    )) as boolean;
+    if (!lazyredraw) await workspace.nvim.setOption("lazyredraw", true);
+    try {
+      return await operation();
+    } finally {
+      if (!lazyredraw) await workspace.nvim.setOption("lazyredraw", false);
+      await workspace.nvim.command("redraw");
+    }
   }
 
   private sortViews(container: RegisteredContainer): void {
