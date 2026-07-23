@@ -54,7 +54,7 @@ This follows VS Code's `viewsContainers` and `views` model:
 - Views start as `visible`, `collapsed`, or `hidden`.
 - User-chosen visible/collapsed state is restored per workspace.
 - Sidebar Views are stacked vertically. Panel Views are arranged horizontally.
-- The Activity Bar selects the active sidebar container.
+- The persistent Activity Bar selects the active primary-sidebar container.
 
 `registerViewContainer()` and `registerView()` are the runtime equivalents of
 VS Code's `viewsContainers` and `views` contribution points. `createTreeView()`
@@ -69,6 +69,11 @@ surface removes its windows while preserving the active container, TreeView
 buffers, expansion state, and cursor position. Showing it restores that state;
 only an explicit container close discards the active selection.
 
+Like VS Code workbench chrome, the Activity Bar is independent of the primary
+sidebar lifecycle. It remains visible while the sidebar is hidden or its active
+container is closed. Closing the Activity Bar window directly recreates it.
+The secondary sidebar and panel do not own separate Activity Bars.
+
 Locations can also be shown before a ViewContainer is contributed. In that
 state coc-ui renders an empty workbench surface that can receive future views
 instead of treating the location as unavailable.
@@ -79,8 +84,8 @@ menus, and keybindings as one declaration.
 
 `ui.switchPrimarySidebar`, `ui.switchSecondarySidebar`, and
 `ui.switchPanel` provide command-driven container selection. Sidebar
-Activity Bar icons provide direct keyboard and mouse selection. Containers on
-distinct surfaces remain mounted concurrently.
+Primary Activity Bar icons provide direct keyboard and mouse selection.
+Containers on distinct surfaces remain mounted concurrently.
 
 Tree views retain coc.nvim's native single-click behavior. When
 `ui.mouse.enable` is enabled, right-clicking a tree item opens the actions

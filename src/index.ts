@@ -7,6 +7,7 @@ import {
   TreeView,
   TreeViewOptions,
   commands,
+  events,
   window,
   workspace,
 } from "coc.nvim";
@@ -126,10 +127,19 @@ class CocUi implements CocUiApi, Disposable {
   private readonly views = new Map<string, RegisteredView>();
   private readonly surfaces = new Map<ViewLocation, SurfaceState>();
   private readonly unmountingContainers = new Set<string>();
+  private activityBarCreation: Promise<void> | undefined;
+  private disposed = false;
   private editorWindowId: number | undefined;
   readonly listPicker = new ListPicker();
 
-  constructor(private readonly context: ExtensionContext) {}
+  constructor(private readonly context: ExtensionContext) {
+    events.on(
+      "WinClosed",
+      (winid) => this.onWindowClosed(winid),
+      undefined,
+      context.subscriptions,
+    );
+  }
 
   registerViewContainer(registration: ViewContainerRegistration): Disposable {
     if (this.containers.has(registration.id)) {
@@ -143,11 +153,14 @@ class CocUi implements CocUiApi, Disposable {
       order: registration.order ?? 0,
       viewIds: [],
     });
-    void this.renderActivityBar(registration.location ?? "primarySidebar");
+    if ((registration.location ?? "primarySidebar") === "primarySidebar") {
+      void this.ensureActivityBar("primarySidebar");
+    }
 
     return Disposable.create(() => {
       void this.closeContainer(registration.id);
       this.containers.delete(registration.id);
+      void this.renderActivityBar("primarySidebar");
     });
   }
 
@@ -312,7 +325,6 @@ class CocUi implements CocUiApi, Disposable {
     }
     await this.closePlaceholder(location);
     surface.visible = false;
-    await this.closeActivityBar(location);
   }
 
   async toggleLocation(location: ViewLocation): Promise<void> {
@@ -375,7 +387,7 @@ class CocUi implements CocUiApi, Disposable {
     if (surface.activeContainerId === id) {
       surface.activeContainerId = undefined;
       surface.visible = false;
-      await this.closeActivityBar(container.location);
+      await this.renderActivityBar(container.location);
     }
   }
 
@@ -421,6 +433,7 @@ class CocUi implements CocUiApi, Disposable {
   }
 
   dispose(): void {
+    this.disposed = true;
     this.listPicker.dispose();
     for (const view of this.views.values()) {
       for (const disposable of view.disposables) disposable.dispose();
@@ -550,7 +563,13 @@ class CocUi implements CocUiApi, Disposable {
       }
     }
     surface.visible = false;
-    await this.closeActivityBar(container.location);
+  }
+
+  private onWindowClosed(winid: number): void {
+    const surface = this.surface("primarySidebar");
+    if (surface.activityBar?.winid !== winid) return;
+    surface.activityBar = undefined;
+    if (!this.disposed) void this.ensureActivityBar("primarySidebar");
   }
 
   private async isValidWindow(winid: number | undefined): Promise<boolean> {
@@ -775,7 +794,7 @@ class CocUi implements CocUiApi, Disposable {
   }
 
   private async ensureActivityBar(location: ViewLocation): Promise<void> {
-    if (location === "panel") return;
+    if (location !== "primarySidebar" || this.disposed) return;
     if (
       !workspace
         .getConfiguration("ui")
@@ -790,15 +809,30 @@ class CocUi implements CocUiApi, Disposable {
       return;
     }
 
+    if (this.activityBarCreation) {
+      await this.activityBarCreation;
+      return;
+    }
+
+    this.activityBarCreation = this.createActivityBar();
+    try {
+      await this.activityBarCreation;
+    } finally {
+      this.activityBarCreation = undefined;
+    }
+  }
+
+  private async createActivityBar(): Promise<void> {
+    const location: ViewLocation = "primarySidebar";
+    const surface = this.surface(location);
     const editorWindowId = await this.findEditorWindow();
     if (!editorWindowId) return;
     await workspace.nvim.call("win_gotoid", [editorWindowId]);
 
     const config = workspace.getConfiguration("ui");
-    const primary = location === "primarySidebar";
     const position = config.get<"left" | "right">(
-      primary ? "primarySidebar.position" : "secondarySidebar.position",
-      primary ? "left" : "right",
+      "primarySidebar.position",
+      "left",
     );
     const width = Math.max(2, config.get<number>("activityBar.width", 3));
     await workspace.nvim.command(
@@ -867,7 +901,7 @@ class CocUi implements CocUiApi, Disposable {
       bufnr,
       "n",
       "<RightMouse>",
-      `<Cmd>CocCommand ui.switch${primary ? "PrimarySidebar" : "SecondarySidebar"}<CR>`,
+      "<Cmd>CocCommand ui.switchPrimarySidebar<CR>",
       options,
     ]);
     await workspace.nvim.call("nvim_buf_set_keymap", [
@@ -881,24 +915,8 @@ class CocUi implements CocUiApi, Disposable {
     await this.renderActivityBar(location);
   }
 
-  private async closeActivityBar(location: ViewLocation): Promise<void> {
-    const surface = this.surface(location);
-    const activityBar = surface.activityBar;
-    if (!activityBar) return;
-    surface.activityBar = undefined;
-    const valid = (await workspace.nvim.call("nvim_buf_is_valid", [
-      activityBar.bufnr,
-    ])) as boolean;
-    if (valid) {
-      await workspace.nvim.call("nvim_buf_delete", [
-        activityBar.bufnr,
-        { force: true },
-      ]);
-    }
-  }
-
   private async renderActivityBar(location: ViewLocation): Promise<void> {
-    if (location === "panel") return;
+    if (location !== "primarySidebar") return;
     const surface = this.surface(location);
     const activityBar = surface.activityBar;
     if (!activityBar || !(await this.isValidWindow(activityBar.winid))) return;
