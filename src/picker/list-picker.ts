@@ -13,12 +13,19 @@ import {
 import { getListSource } from "./list-source";
 
 type FloatState = {
+  namespace: number;
   promptBuffer: number;
   promptWindow: number;
   resultsBuffer: number;
   resultsWindow: number;
   targetBuffer: number;
   targetWindow: number;
+};
+
+type MatchedItem = {
+  item: ListItem;
+  positions?: Uint32Array;
+  score: number;
 };
 
 const DEFAULT_LIMIT = 10_000;
@@ -30,7 +37,8 @@ export class ListPicker implements Disposable {
   private source: IList | undefined;
   private args: string[] = [];
   private items: ListItem[] = [];
-  private visibleItems: ListItem[] = [];
+  private visibleItems: MatchedItem[] = [];
+  private readonly fuzzyMatch = workspace.createFuzzyMatch();
   private selected = 0;
   private input = "";
   private generation = 0;
@@ -100,7 +108,7 @@ export class ListPicker implements Disposable {
 
   async accept(): Promise<void> {
     const source = this.source;
-    let item = this.visibleItems[this.selected];
+    let item = this.visibleItems[this.selected]?.item;
     if (!source || !item) return;
     if (source.resolveItem) item = (await source.resolveItem(item)) ?? item;
     const action =
@@ -168,12 +176,31 @@ export class ListPicker implements Disposable {
   }
 
   private applyFilter(): void {
-    const query = this.input.toLocaleLowerCase();
-    const filtered = this.source?.interactive
-      ? this.items
-      : this.items.filter((item) =>
-          (item.filterText ?? item.label).toLocaleLowerCase().includes(query),
-        );
+    const query = this.input;
+    let filtered: MatchedItem[];
+    if (this.source?.interactive || query.length === 0) {
+      filtered = this.items.map((item) => ({ item, score: 0 }));
+    } else {
+      this.fuzzyMatch.setPattern(query);
+      filtered = this.items
+        .map((item, index): (MatchedItem & { index: number }) | undefined => {
+          const filterText = item.filterText ?? item.label;
+          const result = this.fuzzyMatch.match(filterText);
+          if (!result) return undefined;
+          const labelResult =
+            filterText === item.label ? result : this.fuzzyMatch.match(item.label);
+          return {
+            item,
+            index,
+            positions: labelResult?.positions,
+            score: result.score,
+          };
+        })
+        .filter(
+          (item): item is MatchedItem & { index: number } => item != null,
+        )
+        .sort((left, right) => right.score - left.score || left.index - right.index);
+    }
     this.visibleItems = filtered;
     this.selected = Math.min(this.selected, Math.max(0, filtered.length - 1));
     this.scheduleRender();
@@ -225,14 +252,30 @@ export class ListPicker implements Disposable {
       Math.min(this.selected - half, this.visibleItems.length - this.visibleLimit),
     );
     const page = this.visibleItems.slice(start, start + this.visibleLimit);
-    const lines = page.map((item) => item.label.replace(/\r?\n/g, " "));
+    const lines = page.map(({ item }) => item.label.replace(/\r?\n/g, " "));
     await workspace.nvim.pauseNotification();
     workspace.nvim.call("nvim_buf_set_option", [state.resultsBuffer, "modifiable", true], true);
     workspace.nvim.call("nvim_buf_set_lines", [state.resultsBuffer, 0, -1, false, lines.length ? lines : [""]], true);
     workspace.nvim.call("nvim_buf_set_option", [state.resultsBuffer, "modifiable", false], true);
-    workspace.nvim.call("nvim_buf_clear_namespace", [state.resultsBuffer, -1, 0, -1], true);
+    workspace.nvim.call("nvim_buf_clear_namespace", [state.resultsBuffer, state.namespace, 0, -1], true);
     if (page.length) {
-      workspace.nvim.call("nvim_buf_add_highlight", [state.resultsBuffer, -1, "CursorLine", this.selected - start, 0, -1], true);
+      workspace.nvim.call("nvim_buf_add_highlight", [state.resultsBuffer, state.namespace, "CursorLine", this.selected - start, 0, -1], true);
+      for (const [line, matched] of page.entries()) {
+        if (!matched.positions) continue;
+        for (const [startColumn, endColumn] of this.fuzzyMatch.matchSpans(
+          lines[line],
+          matched.positions,
+        )) {
+          workspace.nvim.call("nvim_buf_add_highlight", [
+            state.resultsBuffer,
+            state.namespace,
+            "CocListSearch",
+            line,
+            startColumn,
+            endColumn,
+          ], true);
+        }
+      }
     }
     await workspace.nvim.resumeNotification(false);
   }
@@ -270,14 +313,50 @@ export class ListPicker implements Disposable {
     const targetBuffer = (await workspace.nvim.call("bufnr", ["%"])) as number;
     const columns = (await workspace.nvim.getOption("columns")) as number;
     const lines = (await workspace.nvim.getOption("lines")) as number;
-    const width = Math.max(40, Math.floor(columns * 0.72));
-    const height = Math.max(8, Math.floor(lines * 0.55));
+    const width = Math.min(
+      Math.max(1, columns - 4),
+      Math.max(20, Math.floor(columns * 0.72)),
+    );
+    const height = Math.min(
+      Math.max(1, lines - 7),
+      Math.max(5, Math.floor(lines * 0.55)),
+    );
     const col = Math.max(0, Math.floor((columns - width) / 2));
     const row = Math.max(0, Math.floor((lines - height - 1) / 3));
+    const namespace = (await workspace.nvim.call("nvim_create_namespace", [
+      "coc-ui-picker",
+    ])) as number;
     const promptBuffer = (await workspace.nvim.call("nvim_create_buf", [false, true])) as number;
     const resultsBuffer = (await workspace.nvim.call("nvim_create_buf", [false, true])) as number;
-    const promptWindow = (await workspace.nvim.call("nvim_open_win", [promptBuffer, true, { relative: "editor", row, col, width, height: 1, style: "minimal", border: "none", title: ` ${name} `, title_pos: "left" }])) as number;
-    const resultsWindow = (await workspace.nvim.call("nvim_open_win", [resultsBuffer, false, { relative: "editor", row: row + 1, col, width, height, style: "minimal", border: "none", focusable: false }])) as number;
+    const promptWindow = (await workspace.nvim.call("nvim_open_win", [
+      promptBuffer,
+      true,
+      {
+        relative: "editor",
+        row,
+        col,
+        width,
+        height: 1,
+        style: "minimal",
+        border: ["╭", "─", "╮", "│", "┤", "─", "├", "│"],
+        title: ` ${name} `,
+        title_pos: "left",
+      },
+    ])) as number;
+    const resultsWindow = (await workspace.nvim.call("nvim_open_win", [
+      resultsBuffer,
+      false,
+      {
+        relative: "editor",
+        row: row + 2,
+        col,
+        width,
+        height,
+        style: "minimal",
+        border: ["├", "─", "┤", "│", "╯", "─", "╰", "│"],
+        focusable: false,
+      },
+    ])) as number;
     for (const buffer of [promptBuffer, resultsBuffer]) {
       await workspace.nvim.call("nvim_buf_set_option", [buffer, "buftype", "nofile"]);
       await workspace.nvim.call("nvim_buf_set_option", [buffer, "bufhidden", "wipe"]);
@@ -285,9 +364,32 @@ export class ListPicker implements Disposable {
     }
     await workspace.nvim.call("nvim_buf_set_option", [promptBuffer, "filetype", "cocui-picker-prompt"]);
     await workspace.nvim.call("nvim_buf_set_option", [resultsBuffer, "filetype", "cocui-picker"]);
+    await workspace.nvim.call("nvim_win_set_option", [
+      promptWindow,
+      "winhighlight",
+      "NormalFloat:NormalFloat,FloatBorder:FloatBorder",
+    ]);
+    await workspace.nvim.call("nvim_win_set_option", [
+      promptWindow,
+      "wrap",
+      false,
+    ]);
     await workspace.nvim.call("nvim_win_set_option", [resultsWindow, "cursorline", false]);
     await workspace.nvim.call("nvim_win_set_option", [resultsWindow, "wrap", false]);
-    return { promptBuffer, promptWindow, resultsBuffer, resultsWindow, targetBuffer, targetWindow };
+    await workspace.nvim.call("nvim_win_set_option", [
+      resultsWindow,
+      "winhighlight",
+      "NormalFloat:NormalFloat,FloatBorder:FloatBorder",
+    ]);
+    return {
+      namespace,
+      promptBuffer,
+      promptWindow,
+      resultsBuffer,
+      resultsWindow,
+      targetBuffer,
+      targetWindow,
+    };
   }
 
   private installCommands(): void {

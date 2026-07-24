@@ -86,6 +86,11 @@ Tree views retain coc.nvim's native single-click behavior. When
 `ui.mouse.enable` is enabled, right-clicking a tree item opens the actions
 provided by its `TreeDataProvider.resolveActions` implementation.
 
+`ui.pickList` presents existing Coc List sources in a bounded floating picker.
+Non-interactive sources use coc.nvim's native fuzzy matcher for scoring,
+ordering, and match highlights. Interactive sources retain their own producer
+and filtering semantics.
+
 View content currently uses coc.nvim's native TreeView renderer. coc-ui owns the
 workbench model, layout, Activity Bar, container lifecycle, and action
 contributions; it does not duplicate TreeDataProvider rendering.

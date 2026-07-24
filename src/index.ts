@@ -676,15 +676,13 @@ class CocUi implements CocUiApi, Disposable {
 
     const rhs = `<Cmd>CocCommand ui.hideLocation ${location}<CR>`;
     const options = { noremap: true, silent: true, nowait: true };
-    for (const key of ["q", "<Esc>"]) {
-      await workspace.nvim.call("nvim_buf_set_keymap", [
-        bufnr,
-        "n",
-        key,
-        rhs,
-        options,
-      ]);
-    }
+    await workspace.nvim.call("nvim_buf_set_keymap", [
+      bufnr,
+      "n",
+      "q",
+      rhs,
+      options,
+    ]);
 
     surface.placeholder = { bufnr, winid };
     surface.visible = true;
@@ -1011,13 +1009,6 @@ class CocUi implements CocUiApi, Disposable {
       "n",
       "<2-LeftMouse>",
       `<Cmd>CocCommand ui.toggleViewAtMouse ${viewId}<CR>`,
-      options,
-    ]);
-    await workspace.nvim.call("nvim_buf_set_keymap", [
-      bufferId,
-      "n",
-      "<Esc>",
-      rhs,
       options,
     ]);
     if (workspace.getConfiguration("ui").get("mouse.enable", true)) {

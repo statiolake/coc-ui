@@ -5,6 +5,7 @@ export declare class ListPicker implements Disposable {
     private args;
     private items;
     private visibleItems;
+    private readonly fuzzyMatch;
     private selected;
     private input;
     private generation;
