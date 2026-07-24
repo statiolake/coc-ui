@@ -31,6 +31,7 @@ export declare class ListPicker implements Disposable {
     private render;
     private context;
     private openWindows;
+    private configureHighlights;
     private installCommands;
 }
 export declare function registerPickerCommands(picker: ListPicker): Disposable[];

@@ -311,6 +311,7 @@ export class ListPicker implements Disposable {
   private async openWindows(name: string): Promise<FloatState> {
     const targetWindow = (await workspace.nvim.call("win_getid")) as number;
     const targetBuffer = (await workspace.nvim.call("bufnr", ["%"])) as number;
+    await this.configureHighlights();
     const columns = (await workspace.nvim.getOption("columns")) as number;
     const lines = (await workspace.nvim.getOption("lines")) as number;
     const width = Math.min(
@@ -367,7 +368,7 @@ export class ListPicker implements Disposable {
     await workspace.nvim.call("nvim_win_set_option", [
       promptWindow,
       "winhighlight",
-      "NormalFloat:NormalFloat,FloatBorder:FloatBorder",
+      "NormalFloat:NormalFloat,FloatBorder:CocUiPickerBorder,FloatTitle:CocUiPickerBorder",
     ]);
     await workspace.nvim.call("nvim_win_set_option", [
       promptWindow,
@@ -379,7 +380,7 @@ export class ListPicker implements Disposable {
     await workspace.nvim.call("nvim_win_set_option", [
       resultsWindow,
       "winhighlight",
-      "NormalFloat:NormalFloat,FloatBorder:FloatBorder",
+      "NormalFloat:NormalFloat,FloatBorder:CocUiPickerBorder,FloatTitle:CocUiPickerBorder",
     ]);
     return {
       namespace,
@@ -390,6 +391,27 @@ export class ListPicker implements Disposable {
       targetBuffer,
       targetWindow,
     };
+  }
+
+  private async configureHighlights(): Promise<void> {
+    const normal = (await workspace.nvim.call("nvim_get_hl", [
+      0,
+      { name: "NormalFloat", link: false },
+    ])) as Record<string, unknown>;
+    const border = (await workspace.nvim.call("nvim_get_hl", [
+      0,
+      { name: "FloatBorder", link: false },
+    ])) as Record<string, unknown>;
+    const pickerBorder = { ...border };
+    for (const key of ["bg", "ctermbg", "blend"]) {
+      if (normal[key] == null) delete pickerBorder[key];
+      else pickerBorder[key] = normal[key];
+    }
+    await workspace.nvim.call("nvim_set_hl", [
+      0,
+      "CocUiPickerBorder",
+      pickerBorder,
+    ]);
   }
 
   private installCommands(): void {
