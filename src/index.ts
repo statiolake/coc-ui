@@ -645,9 +645,18 @@ class CocUi implements CocUiApi, Disposable {
       `coc-ui-placeholder://${location}`,
     ]);
     await workspace.nvim.call("nvim_win_set_buf", [winid, bufnr]);
+    await workspace.nvim.call("nvim_buf_set_lines", [
+      bufnr,
+      0,
+      -1,
+      false,
+      ["No components mounted"],
+    ]);
     for (const [name, value] of [
       ["buftype", "nofile"],
       ["bufhidden", "wipe"],
+      ["modifiable", false],
+      ["readonly", true],
       ["swapfile", false],
       ["filetype", "cocui-placeholder"],
     ] as const) {
