@@ -33,6 +33,8 @@ type MatchedItem = {
 const DEFAULT_LIMIT = 10_000;
 const DEFAULT_VISIBLE_ITEMS = 200;
 const POLL_INTERVAL = 35;
+/** Below Neovim's default float zindex (50) so native Coc menus/dialogs stack above. */
+const PICKER_ZINDEX = 40;
 
 export class ListPicker implements Disposable {
   private state: FloatState | undefined;
@@ -422,6 +424,7 @@ export class ListPicker implements Disposable {
         border: ["╭", "─", "╮", "│", "┤", "─", "├", "│"],
         title: ` ${name} `,
         title_pos: "left",
+        zindex: PICKER_ZINDEX,
       },
     ])) as number;
     const resultsWindow = (await workspace.nvim.call("nvim_open_win", [
@@ -436,6 +439,7 @@ export class ListPicker implements Disposable {
         style: "minimal",
         border: ["├", "─", "┤", "│", "╯", "─", "╰", "│"],
         focusable: false,
+        zindex: PICKER_ZINDEX,
       },
     ])) as number;
     for (const buffer of [promptBuffer, resultsBuffer]) {
