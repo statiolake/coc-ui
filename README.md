@@ -92,10 +92,10 @@ ordering, and match highlights. Interactive sources retain their own producer
 and filtering semantics. `ui.picker.resume` reloads the last source with its
 previous arguments and query.
 
-Pressing `<Tab>` switches the picker to the selected source's actions. These
-come directly from `IList.actions`; the default selection, persistence, and
-reload behavior follow `defaultAction`, `persist`, and `reload`. `<Esc>` or
-`<Tab>` returns to the item query without discarding it.
+Pressing `<Tab>` opens coc.nvim's native menu picker for the selected source
+item's actions from `IList.actions`. Canceling the menu leaves the floating
+picker, query, and selection intact. Choosing an action still honors
+`resolveItem`, default source context, `persist`, and `reload`.
 
 View content currently uses coc.nvim's native TreeView renderer. coc-ui owns the
 workbench model, layout, Activity Bar, container lifecycle, and action

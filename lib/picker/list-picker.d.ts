@@ -7,9 +7,6 @@ export declare class ListPicker implements Disposable {
     private items;
     private visibleItems;
     private readonly fuzzyMatch;
-    private actionMode;
-    private actionItem;
-    private actionSelected;
     private selected;
     private input;
     private generation;
@@ -28,7 +25,7 @@ export declare class ListPicker implements Disposable {
     move(delta: number): Promise<void>;
     accept(): Promise<void>;
     showActions(): Promise<void>;
-    cancelActions(): Promise<void>;
+    private focusPrompt;
     private executeAction;
     private reload;
     private push;
@@ -38,7 +35,6 @@ export declare class ListPicker implements Disposable {
     private pollInput;
     private scheduleRender;
     private render;
-    private renderActions;
     private context;
     private openWindows;
     private configureHighlights;
