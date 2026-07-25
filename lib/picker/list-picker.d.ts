@@ -1,11 +1,15 @@
 import { Disposable } from "coc.nvim";
 export declare class ListPicker implements Disposable {
     private state;
+    private name;
     private source;
     private args;
     private items;
     private visibleItems;
     private readonly fuzzyMatch;
+    private actionMode;
+    private actionItem;
+    private actionSelected;
     private selected;
     private input;
     private generation;
@@ -17,10 +21,15 @@ export declare class ListPicker implements Disposable {
     private limit;
     private visibleLimit;
     show(name: string, args?: string[]): Promise<void>;
+    resume(): Promise<void>;
+    private open;
     close(): Promise<void>;
     dispose(): void;
     move(delta: number): Promise<void>;
     accept(): Promise<void>;
+    showActions(): Promise<void>;
+    cancelActions(): Promise<void>;
+    private executeAction;
     private reload;
     private push;
     private scheduleFilter;
@@ -29,6 +38,7 @@ export declare class ListPicker implements Disposable {
     private pollInput;
     private scheduleRender;
     private render;
+    private renderActions;
     private context;
     private openWindows;
     private configureHighlights;

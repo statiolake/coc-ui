@@ -89,7 +89,13 @@ provided by its `TreeDataProvider.resolveActions` implementation.
 `ui.pickList` presents existing Coc List sources in a bounded floating picker.
 Non-interactive sources use coc.nvim's native fuzzy matcher for scoring,
 ordering, and match highlights. Interactive sources retain their own producer
-and filtering semantics.
+and filtering semantics. `ui.picker.resume` reloads the last source with its
+previous arguments and query.
+
+Pressing `<Tab>` switches the picker to the selected source's actions. These
+come directly from `IList.actions`; the default selection, persistence, and
+reload behavior follow `defaultAction`, `persist`, and `reload`. `<Esc>` or
+`<Tab>` returns to the item query without discarding it.
 
 View content currently uses coc.nvim's native TreeView renderer. coc-ui owns the
 workbench model, layout, Activity Bar, container lifecycle, and action

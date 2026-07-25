@@ -3,6 +3,7 @@ import {
   Disposable,
   IList,
   ListContext,
+  ListAction,
   ListItem,
   ListOptions,
   ListTask,
@@ -35,11 +36,15 @@ const POLL_INTERVAL = 35;
 
 export class ListPicker implements Disposable {
   private state: FloatState | undefined;
+  private name: string | undefined;
   private source: IList | undefined;
   private args: string[] = [];
   private items: ListItem[] = [];
   private visibleItems: MatchedItem[] = [];
   private readonly fuzzyMatch = workspace.createFuzzyMatch();
+  private actionMode = false;
+  private actionItem: ListItem | undefined;
+  private actionSelected = 0;
   private selected = 0;
   private input = "";
   private generation = 0;
@@ -52,6 +57,19 @@ export class ListPicker implements Disposable {
   private visibleLimit = DEFAULT_VISIBLE_ITEMS;
 
   async show(name: string, args: string[] = []): Promise<void> {
+    await this.open(name, args, "");
+  }
+
+  async resume(): Promise<void> {
+    if (!this.name) return;
+    await this.open(this.name, this.args, this.input);
+  }
+
+  private async open(
+    name: string,
+    args: string[],
+    input: string,
+  ): Promise<void> {
     await this.close();
     const config = workspace.getConfiguration("ui.picker");
     this.limit = Math.max(100, config.get<number>("maxItems", DEFAULT_LIMIT));
@@ -59,12 +77,27 @@ export class ListPicker implements Disposable {
       20,
       config.get<number>("visibleItems", DEFAULT_VISIBLE_ITEMS),
     );
+    this.name = name;
     this.source = getListSource(name);
-    this.args = args;
+    this.args = [...args];
+    this.input = input;
+    this.actionMode = false;
+    this.actionItem = undefined;
     this.state = await this.openWindows(name);
+    await workspace.nvim.call("nvim_buf_set_lines", [
+      this.state.promptBuffer,
+      0,
+      -1,
+      false,
+      [input],
+    ]);
     this.installCommands();
     this.pollTimer = setInterval(() => void this.pollInput(), POLL_INTERVAL);
     await workspace.nvim.call("win_gotoid", [this.state.promptWindow]);
+    await workspace.nvim.call("nvim_win_set_cursor", [
+      this.state.promptWindow,
+      [1, Buffer.byteLength(input)],
+    ]);
     await workspace.nvim.command("startinsert");
     await this.reload();
   }
@@ -80,6 +113,8 @@ export class ListPicker implements Disposable {
     const state = this.state;
     this.state = undefined;
     if (!state) return;
+    this.actionMode = false;
+    this.actionItem = undefined;
     await workspace.nvim.command("stopinsert");
     for (const winid of [state.promptWindow, state.resultsWindow]) {
       const valid = (await workspace.nvim.call("nvim_win_is_valid", [
@@ -105,6 +140,16 @@ export class ListPicker implements Disposable {
   }
 
   async move(delta: number): Promise<void> {
+    if (this.actionMode) {
+      const actions = this.source?.actions ?? [];
+      if (!actions.length) return;
+      this.actionSelected = Math.max(
+        0,
+        Math.min(actions.length - 1, this.actionSelected + delta),
+      );
+      await this.render();
+      return;
+    }
     if (!this.visibleItems.length) return;
     this.selected = Math.max(
       0,
@@ -115,16 +160,79 @@ export class ListPicker implements Disposable {
 
   async accept(): Promise<void> {
     const source = this.source;
-    let item = this.visibleItems[this.selected]?.item;
+    if (this.actionMode) {
+      const action = source?.actions[this.actionSelected];
+      const item = this.actionItem;
+      if (action && item) await this.executeAction(action, item);
+      return;
+    }
+    const item = this.visibleItems[this.selected]?.item;
     if (!source || !item) return;
-    if (source.resolveItem) item = (await source.resolveItem(item)) ?? item;
     const action =
       source.actions.find((candidate) => candidate.name === source.defaultAction) ??
       source.actions[0];
     if (!action) return;
+    await this.executeAction(action, item);
+  }
+
+  async showActions(): Promise<void> {
+    const source = this.source;
+    const item = this.visibleItems[this.selected]?.item;
+    if (!source || !item || !source.actions.length) return;
+    this.actionMode = true;
+    this.actionItem = item;
+    this.actionSelected = Math.max(
+      0,
+      source.actions.findIndex((action) => action.name === source.defaultAction),
+    );
+    if (this.state) {
+      await workspace.nvim.call("nvim_buf_set_lines", [
+        this.state.promptBuffer,
+        0,
+        -1,
+        false,
+        [`Actions: ${item.label.replace(/\r?\n/g, " ")}`],
+      ]);
+    }
+    await workspace.nvim.command("stopinsert");
+    await this.render();
+  }
+
+  async cancelActions(): Promise<void> {
+    if (!this.actionMode) return;
+    this.actionMode = false;
+    this.actionItem = undefined;
+    if (this.state) {
+      await workspace.nvim.call("nvim_buf_set_lines", [
+        this.state.promptBuffer,
+        0,
+        -1,
+        false,
+        [this.input],
+      ]);
+      await workspace.nvim.call("nvim_win_set_cursor", [
+        this.state.promptWindow,
+        [1, Buffer.byteLength(this.input)],
+      ]);
+      await workspace.nvim.command("startinsert");
+    }
+    await this.render();
+  }
+
+  private async executeAction(
+    action: ListAction,
+    unresolvedItem: ListItem,
+  ): Promise<void> {
+    const source = this.source;
+    if (!source) return;
+    const item = source.resolveItem
+      ? ((await source.resolveItem(unresolvedItem)) ?? unresolvedItem)
+      : unresolvedItem;
     const context = this.context(this.input);
     if (!action.persist) await this.close();
+    else if (this.actionMode) await this.cancelActions();
     await action.execute(item, context);
+    if (action.persist && action.reload && this.state) await this.reload();
   }
 
   private async reload(): Promise<void> {
@@ -224,7 +332,7 @@ export class ListPicker implements Disposable {
 
   private async pollInput(): Promise<void> {
     const state = this.state;
-    if (!state) return;
+    if (!state || this.actionMode) return;
     const valid = (await workspace.nvim.call("nvim_buf_is_valid", [
       state.promptBuffer,
     ])) as boolean;
@@ -253,6 +361,10 @@ export class ListPicker implements Disposable {
   private async render(): Promise<void> {
     const state = this.state;
     if (!state) return;
+    if (this.actionMode) {
+      await this.renderActions(state);
+      return;
+    }
     const half = Math.floor(this.visibleLimit / 2);
     const start = Math.max(
       0,
@@ -283,6 +395,47 @@ export class ListPicker implements Disposable {
           ], true);
         }
       }
+    }
+    await workspace.nvim.resumeNotification(false);
+  }
+
+  private async renderActions(state: FloatState): Promise<void> {
+    const actions = this.source?.actions ?? [];
+    const lines = actions.map((action) => action.name);
+    await workspace.nvim.pauseNotification();
+    workspace.nvim.call(
+      "nvim_buf_set_option",
+      [state.resultsBuffer, "modifiable", true],
+      true,
+    );
+    workspace.nvim.call(
+      "nvim_buf_set_lines",
+      [state.resultsBuffer, 0, -1, false, lines.length ? lines : [""]],
+      true,
+    );
+    workspace.nvim.call(
+      "nvim_buf_set_option",
+      [state.resultsBuffer, "modifiable", false],
+      true,
+    );
+    workspace.nvim.call(
+      "nvim_buf_clear_namespace",
+      [state.resultsBuffer, state.namespace, 0, -1],
+      true,
+    );
+    if (lines.length) {
+      workspace.nvim.call(
+        "nvim_buf_add_highlight",
+        [
+          state.resultsBuffer,
+          state.namespace,
+          "CursorLine",
+          this.actionSelected,
+          0,
+          -1,
+        ],
+        true,
+      );
     }
     await workspace.nvim.resumeNotification(false);
   }
@@ -429,6 +582,7 @@ export class ListPicker implements Disposable {
     const mappings: Array<[string, string]> = [
       ["<Esc>", "ui.picker.close"],
       ["<C-c>", "ui.picker.close"],
+      ["<Tab>", "ui.picker.actions"],
       ["<CR>", "ui.picker.accept"],
       ["<C-n>", "ui.picker.next"],
       ["<Down>", "ui.picker.next"],
@@ -437,6 +591,18 @@ export class ListPicker implements Disposable {
     ];
     for (const [key, command] of mappings) {
       void workspace.nvim.call("nvim_buf_set_keymap", [state.promptBuffer, "i", key, `<Cmd>CocCommand ${command}<CR>`, { noremap: true, silent: true, nowait: true }]);
+    }
+    const actionMappings: Array<[string, string]> = [
+      ["<Esc>", "ui.picker.cancelActions"],
+      ["<Tab>", "ui.picker.cancelActions"],
+      ["<CR>", "ui.picker.accept"],
+      ["j", "ui.picker.next"],
+      ["<Down>", "ui.picker.next"],
+      ["k", "ui.picker.previous"],
+      ["<Up>", "ui.picker.previous"],
+    ];
+    for (const [key, command] of actionMappings) {
+      void workspace.nvim.call("nvim_buf_set_keymap", [state.promptBuffer, "n", key, `<Cmd>CocCommand ${command}<CR>`, { noremap: true, silent: true, nowait: true }]);
     }
   }
 }
@@ -447,6 +613,13 @@ export function registerPickerCommands(picker: ListPicker): Disposable[] {
   activePicker = picker;
   return [
     commands.registerCommand("ui.picker.close", () => activePicker?.close()),
+    commands.registerCommand("ui.picker.resume", () => activePicker?.resume()),
+    commands.registerCommand("ui.picker.actions", () =>
+      activePicker?.showActions(),
+    ),
+    commands.registerCommand("ui.picker.cancelActions", () =>
+      activePicker?.cancelActions(),
+    ),
     commands.registerCommand("ui.picker.accept", () => activePicker?.accept()),
     commands.registerCommand("ui.picker.next", () => activePicker?.move(1)),
     commands.registerCommand("ui.picker.previous", () => activePicker?.move(-1)),
