@@ -19,6 +19,7 @@ type FloatState = {
   resultsBuffer: number;
   resultsWindow: number;
   targetBuffer: number;
+  targetMode: string;
   targetWindow: number;
 };
 
@@ -79,6 +80,7 @@ export class ListPicker implements Disposable {
     const state = this.state;
     this.state = undefined;
     if (!state) return;
+    await workspace.nvim.command("stopinsert");
     for (const winid of [state.promptWindow, state.resultsWindow]) {
       const valid = (await workspace.nvim.call("nvim_win_is_valid", [
         winid,
@@ -90,6 +92,11 @@ export class ListPicker implements Disposable {
     ])) as boolean;
     if (targetValid) {
       await workspace.nvim.call("win_gotoid", [state.targetWindow]);
+      if (state.targetMode.startsWith("i")) {
+        await workspace.nvim.command("startinsert");
+      } else if (state.targetMode.startsWith("R")) {
+        await workspace.nvim.command("startreplace");
+      }
     }
   }
 
@@ -311,6 +318,7 @@ export class ListPicker implements Disposable {
   private async openWindows(name: string): Promise<FloatState> {
     const targetWindow = (await workspace.nvim.call("win_getid")) as number;
     const targetBuffer = (await workspace.nvim.call("bufnr", ["%"])) as number;
+    const targetMode = (await workspace.nvim.call("mode", [1])) as string;
     await this.configureHighlights();
     const columns = (await workspace.nvim.getOption("columns")) as number;
     const lines = (await workspace.nvim.getOption("lines")) as number;
@@ -389,6 +397,7 @@ export class ListPicker implements Disposable {
       resultsBuffer,
       resultsWindow,
       targetBuffer,
+      targetMode,
       targetWindow,
     };
   }
