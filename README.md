@@ -89,7 +89,9 @@ provided by its `TreeDataProvider.resolveActions` implementation.
 `ui.pickList` presents existing Coc List sources in a bounded floating picker.
 Non-interactive sources use coc.nvim's native fuzzy matcher for scoring,
 ordering, and match highlights. Interactive sources retain their own producer
-and filtering semantics. `ui.picker.resume` reloads the last source with its
+and filtering semantics. Picker border shape follows coc.nvim's
+`dialog.rounded` setting (rounded corners when true, square box-drawing
+corners when false). `ui.picker.resume` reloads the last source with its
 previous arguments and query.
 
 Pressing `<Tab>` opens coc.nvim's native menu picker for the selected source

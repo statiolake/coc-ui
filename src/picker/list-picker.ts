@@ -36,6 +36,23 @@ const POLL_INTERVAL = 35;
 /** Below Neovim's default float zindex (50) so native Coc menus/dialogs stack above. */
 const PICKER_ZINDEX = 40;
 
+/**
+ * Joined prompt/results float borders. Outer corners follow `dialog.rounded`;
+ * shared separator junctions stay ├ ┤. Neovim order: TL, T, TR, R, BR, B, BL, L.
+ */
+function pickerBorders(rounded: boolean): {
+  prompt: string[];
+  results: string[];
+} {
+  const [topLeft, topRight, bottomRight, bottomLeft] = rounded
+    ? (["╭", "╮", "╯", "╰"] as const)
+    : (["┌", "┐", "┘", "└"] as const);
+  return {
+    prompt: [topLeft, "─", topRight, "│", "┤", "─", "├", "│"],
+    results: ["├", "─", "┤", "│", bottomRight, "─", bottomLeft, "│"],
+  };
+}
+
 export class ListPicker implements Disposable {
   private state: FloatState | undefined;
   private name: string | undefined;
@@ -411,6 +428,9 @@ export class ListPicker implements Disposable {
     ])) as number;
     const promptBuffer = (await workspace.nvim.call("nvim_create_buf", [false, true])) as number;
     const resultsBuffer = (await workspace.nvim.call("nvim_create_buf", [false, true])) as number;
+    const borders = pickerBorders(
+      workspace.getConfiguration("dialog").get<boolean>("rounded", true),
+    );
     const promptWindow = (await workspace.nvim.call("nvim_open_win", [
       promptBuffer,
       true,
@@ -421,7 +441,7 @@ export class ListPicker implements Disposable {
         width,
         height: 1,
         style: "minimal",
-        border: ["╭", "─", "╮", "│", "┤", "─", "├", "│"],
+        border: borders.prompt,
         title: ` ${name} `,
         title_pos: "left",
         zindex: PICKER_ZINDEX,
@@ -437,7 +457,7 @@ export class ListPicker implements Disposable {
         width,
         height,
         style: "minimal",
-        border: ["├", "─", "┤", "│", "╯", "─", "╰", "│"],
+        border: borders.results,
         focusable: false,
         zindex: PICKER_ZINDEX,
       },
