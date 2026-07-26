@@ -26,7 +26,12 @@ export interface ViewRegistration {
     order?: number;
     visibility?: ViewVisibility;
 }
-export interface CocTreeViewOptions<T> extends TreeViewOptions<T> {
+/**
+ * Options for {@link CocUiApi.createTreeView}. Extends coc.nvim TreeViewOptions
+ * except `disableLeafIndent`, which coc-ui always applies internally so
+ * same-depth disclosure markers and leaf icons share one column.
+ */
+export interface CocTreeViewOptions<T> extends Omit<TreeViewOptions<T>, "disableLeafIndent"> {
     actions?: ViewAction<T>[];
 }
 export interface ViewAction<T> {

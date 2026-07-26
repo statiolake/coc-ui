@@ -13,7 +13,7 @@
     "build": "tsc --project tsconfig.build.json && node esbuild.mjs",
     "prepare": "node esbuild.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "tsc --project tsconfig.test.json && node --test .tmp/test/picker/preview.test.js .tmp/test/tree/tree-decoration-model.test.js .tmp/test/tree/native-tree-view.test.js; status=$?; rm -rf .tmp; exit $status"
+    "test": "tsc --project tsconfig.test.json && node --test .tmp/test/picker/preview.test.js .tmp/test/tree/tree-decoration-model.test.js .tmp/test/tree/native-tree-view.test.js .tmp/test/tree/tree-view-options.test.js; status=$?; rm -rf .tmp; exit $status"
   },
   "activationEvents": [
     "*"

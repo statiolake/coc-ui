@@ -12,6 +12,7 @@ import {
 } from "coc.nvim";
 import { ListPicker, registerPickerCommands } from "./picker/list-picker";
 import { attachTreeViewDecoration } from "./tree/tree-decoration";
+import { toNativeTreeViewOptions } from "./tree/tree-view-options";
 
 /** Mirrors VS Code's workbench surfaces. */
 export type ViewLocation = "primarySidebar" | "secondarySidebar" | "panel";
@@ -44,7 +45,13 @@ export interface ViewRegistration {
   visibility?: ViewVisibility;
 }
 
-export interface CocTreeViewOptions<T> extends TreeViewOptions<T> {
+/**
+ * Options for {@link CocUiApi.createTreeView}. Extends coc.nvim TreeViewOptions
+ * except `disableLeafIndent`, which coc-ui always applies internally so
+ * same-depth disclosure markers and leaf icons share one column.
+ */
+export interface CocTreeViewOptions<T>
+  extends Omit<TreeViewOptions<T>, "disableLeafIndent"> {
   actions?: ViewAction<T>[];
 }
 
@@ -189,11 +196,13 @@ class CocUi implements CocUiApi, Disposable {
       treeOptions.treeDataProvider,
       actions,
     );
-    const tree = window.createTreeView(id, {
-      ...treeOptions,
-      treeDataProvider,
-      bufhidden: treeOptions.bufhidden ?? "hide",
-    });
+    const tree = window.createTreeView(
+      id,
+      toNativeTreeViewOptions({
+        ...treeOptions,
+        treeDataProvider,
+      }),
+    );
     const keymappableTree = tree as KeymappableTreeView<T>;
     if (typeof keymappableTree.registerLocalKeymap !== "function") {
       throw new Error(

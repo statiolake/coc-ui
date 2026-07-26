@@ -119,4 +119,11 @@ isolated in a small adapter that exposes a decoration snapshot.
 Providers still supply `TreeItem` data; coc-ui does not learn component-specific
 tree semantics.
 
+Every `createTreeView()` also follows one VS Code-compatible column layout:
+at each depth, collapsible disclosure markers and leaf/file icons share the same
+column. coc-ui enforces this by always passing `disableLeafIndent: true` to
+native `window.createTreeView`; `CocTreeViewOptions` omits that flag so
+components cannot opt into coc.nvim's extra leaf indentation. Actions,
+keybindings, filter, and other options remain contributor-controlled.
+
 This repository is under local development and is not published yet.
