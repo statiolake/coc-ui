@@ -11,6 +11,7 @@ import {
   workspace,
 } from "coc.nvim";
 import { ListPicker, registerPickerCommands } from "./picker/list-picker";
+import { attachTreeViewDecoration } from "./tree/tree-decoration";
 
 /** Mirrors VS Code's workbench surfaces. */
 export type ViewLocation = "primarySidebar" | "secondarySidebar" | "panel";
@@ -239,6 +240,7 @@ class CocUi implements CocUiApi, Disposable {
     container.viewIds.push(id);
     this.sortViews(container);
     registered.disposables.push(
+      attachTreeViewDecoration(tree),
       tree.onDidChangeVisibility(({ visible }) => {
         if (!visible) void this.onViewHidden(id);
       }),

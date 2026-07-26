@@ -108,8 +108,15 @@ item's actions from `IList.actions`. Canceling the menu leaves the floating
 picker, query, and selection intact. Choosing an action still honors
 `resolveItem`, default source context, `persist`, and `reload`.
 
-View content currently uses coc.nvim's native TreeView renderer. coc-ui owns the
-workbench model, layout, Activity Bar, container lifecycle, and action
-contributions; it does not duplicate TreeDataProvider rendering.
+View content uses coc.nvim's native TreeView renderer. coc-ui owns the workbench
+model, layout, Activity Bar, container lifecycle, action contributions, and
+common tree decoration applied to every view created through `createTreeView()`.
+Decoration adds indent guides and state-aware disclosure markers for collapsible
+items (`TreeItem.collapsibleState`), configured under `ui.tree` rather than per
+component. Access to non-public native TreeView fields used for decoration
+(`renderedItems`, `nodesMap`, `startLnum`, `onDidRefrash`, `filtering`) is
+isolated in a small adapter that exposes a decoration snapshot.
+Providers still supply `TreeItem` data; coc-ui does not learn component-specific
+tree semantics.
 
 This repository is under local development and is not published yet.

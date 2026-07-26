@@ -13,7 +13,7 @@
     "build": "tsc --project tsconfig.build.json && node esbuild.mjs",
     "prepare": "node esbuild.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "tsc --project tsconfig.test.json && node --test .tmp/test/picker/preview.test.js; status=$?; rm -rf .tmp; exit $status"
+    "test": "tsc --project tsconfig.test.json && node --test .tmp/test/picker/preview.test.js .tmp/test/tree/tree-decoration-model.test.js .tmp/test/tree/native-tree-view.test.js; status=$?; rm -rf .tmp; exit $status"
   },
   "activationEvents": [
     "*"
@@ -118,6 +118,26 @@
           "type": "boolean",
           "default": true,
           "description": "Enable native mouse navigation and context menus in Coc UI tree views."
+        },
+        "ui.tree.indentGuides.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show vertical indent guides for nested items in Coc UI tree views."
+        },
+        "ui.tree.indentGuides.character": {
+          "type": "string",
+          "default": "│",
+          "description": "Character used for Coc UI tree indent guides."
+        },
+        "ui.tree.disclosure.collapsed": {
+          "type": "string",
+          "default": "",
+          "description": "Disclosure marker overlay for collapsed collapsible tree items."
+        },
+        "ui.tree.disclosure.expanded": {
+          "type": "string",
+          "default": "",
+          "description": "Disclosure marker overlay for expanded collapsible tree items."
         },
         "ui.picker.maxItems": {
           "type": "number",
