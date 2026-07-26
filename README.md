@@ -96,10 +96,12 @@ previous arguments and query.
 
 When the selected item's `location` resolves to an existing local file and the
 editor is wide enough (`ui.picker.preview.minColumns`, default 120), the picker
-reflows to a left list pane with a framed file preview on the right. Preview
-eligibility is item-driven (string URI, LSP `Location`, or `LocationWithLine`),
-not source-name-driven. Narrow screens keep the original single-column picker
-geometry. Disable with `ui.picker.preview.enable`.
+partitions its fixed outer rectangle into a left list pane and a framed file
+preview on the right. Preview eligibility is item-driven (string URI, LSP
+`Location`, or `LocationWithLine`), not source-name-driven. Showing or hiding
+the preview never changes the picker's outer size at a given editor size; below
+the column threshold the list and prompt occupy the full rectangle. Disable with
+`ui.picker.preview.enable`.
 
 Pressing `<Tab>` opens coc.nvim's native menu picker for the selected source
 item's actions from `IList.actions`. Canceling the menu leaves the floating

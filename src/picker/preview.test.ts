@@ -158,16 +158,9 @@ describe("preview-location", () => {
 });
 
 describe("preview-layout", () => {
-  it("preserves historical narrow geometry exactly", () => {
-    const columns = 80;
-    const lines = 40;
-    const layout = computePickerLayout({
-      columns,
-      lines,
-      showPreview: false,
-    });
+  function expectedOuter(columns: number, lines: number) {
     const width = Math.min(
-      Math.max(1, columns - 4),
+      Math.max(1, columns - LAYOUT_HORIZONTAL_PADDING),
       Math.max(20, Math.floor(columns * LAYOUT_WIDTH_RATIO)),
     );
     const height = Math.min(
@@ -176,9 +169,55 @@ describe("preview-layout", () => {
     );
     const col = Math.max(0, Math.floor((columns - width) / 2));
     const row = Math.max(0, Math.floor((lines - height - 1) / 3));
+    return { width, height, col, row };
+  }
+
+  function outerSpan(layout: ReturnType<typeof computePickerLayout>): number {
+    if (layout.preview) {
+      return (
+        layout.prompt.width + LAYOUT_PREVIEW_GAP + layout.preview.width
+      );
+    }
+    return layout.prompt.width;
+  }
+
+  it("uses a fixed outer rectangle for single-pane mode", () => {
+    const columns = 80;
+    const lines = 40;
+    const layout = computePickerLayout({
+      columns,
+      lines,
+      showPreview: false,
+    });
+    const { width, height, col, row } = expectedOuter(columns, lines);
     assert.deepEqual(layout.prompt, { row, col, width, height: 1 });
     assert.deepEqual(layout.results, { row: row + 2, col, width, height });
     assert.equal(layout.preview, undefined);
+  });
+
+  it("keeps the same outer rectangle with or without preview", () => {
+    const columns = 160;
+    const lines = 50;
+    const without = computePickerLayout({
+      columns,
+      lines,
+      showPreview: false,
+    });
+    const withPreview = computePickerLayout({
+      columns,
+      lines,
+      showPreview: true,
+    });
+    const { width, col } = expectedOuter(columns, lines);
+    assert.ok(withPreview.preview);
+    assert.equal(without.prompt.col, col);
+    assert.equal(withPreview.prompt.col, col);
+    assert.equal(outerSpan(without), width);
+    assert.equal(outerSpan(withPreview), width);
+    assert.equal(
+      withPreview.preview!.col + withPreview.preview!.width,
+      without.prompt.col + without.prompt.width,
+    );
   });
 
   it("does not create preview below the column threshold", () => {
@@ -190,9 +229,17 @@ describe("preview-layout", () => {
     assert.equal(layout.preview, undefined);
     assert.equal(canShowPreviewPane(PREVIEW_MIN_COLUMNS - 1), false);
     assert.equal(canShowPreviewPane(PREVIEW_MIN_COLUMNS), true);
+    // Outer size still matches the no-preview layout at the same editor size.
+    const without = computePickerLayout({
+      columns: PREVIEW_MIN_COLUMNS - 1,
+      lines: 50,
+      showPreview: false,
+    });
+    assert.equal(layout.prompt.col, without.prompt.col);
+    assert.equal(layout.prompt.width, without.prompt.width);
   });
 
-  it("reflows to a left list and right preview when wide", () => {
+  it("partitions the fixed outer rectangle into list and preview when wide", () => {
     const layout = computePickerLayout({
       columns: 160,
       lines: 50,
@@ -207,15 +254,20 @@ describe("preview-layout", () => {
     );
     assert.equal(layout.preview!.row, layout.prompt.row);
     assert.equal(layout.preview!.height, layout.results.height + 2);
-    const span =
-      layout.prompt.width + LAYOUT_PREVIEW_GAP + layout.preview!.width;
-    assert.ok(layout.prompt.col + span <= 160);
+    assert.ok(layout.prompt.width >= LAYOUT_MIN_LIST_WIDTH);
+    assert.ok(layout.preview!.width >= LAYOUT_MIN_PREVIEW_WIDTH);
+    const { width, col } = expectedOuter(160, 50);
+    assert.equal(layout.prompt.col, col);
+    assert.equal(outerSpan(layout), width);
   });
 
-  it("falls back when available width cannot fit both panes", () => {
+  it("falls back when outer width cannot fit both panes", () => {
     const minSpan =
       LAYOUT_MIN_LIST_WIDTH + LAYOUT_PREVIEW_GAP + LAYOUT_MIN_PREVIEW_WIDTH;
-    const columns = minSpan + LAYOUT_HORIZONTAL_PADDING - 1;
+    // Ratio-clamped outer sits below minSpan even though padding-limited
+    // available columns would otherwise look large enough.
+    const columns = Math.ceil(minSpan / LAYOUT_WIDTH_RATIO) - 1;
+    assert.ok(columns - LAYOUT_HORIZONTAL_PADDING >= minSpan);
     assert.equal(canShowPreviewPane(columns, columns), false);
     const layout = computePickerLayout({
       columns,
@@ -224,6 +276,7 @@ describe("preview-layout", () => {
       minColumns: columns,
     });
     assert.equal(layout.preview, undefined);
+    assert.equal(outerSpan(layout), expectedOuter(columns, 40).width);
   });
 
   it("compares layouts for preview dedup reflow decisions", () => {
@@ -242,8 +295,17 @@ describe("preview-layout", () => {
       lines: 50,
       showPreview: true,
     });
+    const d = computePickerLayout({
+      columns: 160,
+      lines: 50,
+      showPreview: false,
+    });
     assert.equal(pickerLayoutsEqual(a, b), true);
     assert.equal(pickerLayoutsEqual(a, c), false);
+    // Same outer size, different internal partition — not equal.
+    assert.equal(pickerLayoutsEqual(a, d), false);
+    assert.equal(a.prompt.col, d.prompt.col);
+    assert.equal(outerSpan(a), outerSpan(d));
   });
 });
 

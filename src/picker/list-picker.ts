@@ -486,7 +486,8 @@ export class ListPicker implements Disposable {
       minColumns: this.previewMinColumns,
     });
     // Same selection already painted: skip reread/repaint. Still reflow when
-    // editor geometry or settings change the computed layout.
+    // editor geometry or settings change the computed pane partition (outer
+    // size stays fixed for a given editor size).
     if (state.preview?.identity === identity) {
       if (pickerLayoutsEqual(state.layout, layout)) return;
       await this.applyLayout(layout, target.path);
@@ -507,7 +508,8 @@ export class ListPicker implements Disposable {
       return;
     }
 
-    // Mount/reflow before painting so the pane size stays stable while lines load.
+    // Mount/partition before painting so the fixed outer rectangle stays put
+    // while preview lines load.
     await this.applyLayout(layout, target.path);
     if (generation !== this.previewGeneration || !this.state?.preview) return;
 
@@ -552,6 +554,8 @@ export class ListPicker implements Disposable {
       }
       state.preview = undefined;
     }
+    // Give list/prompt the full outer rectangle; col/width of that outer box
+    // match the preview-partitioned layout for this editor size.
     const layout = computePickerLayout({
       columns,
       lines,
