@@ -10,6 +10,7 @@ export declare class ListPicker implements Disposable {
     private selected;
     private input;
     private generation;
+    private previewGeneration;
     private tokenSource;
     private task;
     private pollTimer;
@@ -17,6 +18,8 @@ export declare class ListPicker implements Disposable {
     private filterTimer;
     private limit;
     private visibleLimit;
+    private previewEnabled;
+    private previewMinColumns;
     show(name: string, args?: string[]): Promise<void>;
     resume(): Promise<void>;
     private open;
@@ -35,6 +38,13 @@ export declare class ListPicker implements Disposable {
     private pollInput;
     private scheduleRender;
     private render;
+    private updatePreview;
+    private hidePreview;
+    private applyLayout;
+    private configurePreviewBuffer;
+    private writePreviewBuffer;
+    private detectFiletype;
+    private focusPreviewLine;
     private context;
     private openWindows;
     private configureHighlights;

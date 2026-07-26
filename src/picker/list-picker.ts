@@ -11,7 +11,37 @@ import {
   window,
   workspace,
 } from "coc.nvim";
+import * as path from "node:path";
 import { getListSource } from "./list-source";
+import {
+  PREVIEW_MAX_BYTES,
+  PREVIEW_MAX_LINES,
+  previewStatusLines,
+  readPreviewContent,
+  resolvePreviewFiletype,
+} from "./preview-content";
+import {
+  PREVIEW_MIN_COLUMNS,
+  canShowPreviewPane,
+  computePickerLayout,
+  pickerLayoutsEqual,
+  type PickerLayout,
+} from "./preview-layout";
+import {
+  findMatchLine,
+  previewIdentity,
+  resolvePreviewTarget,
+  type PreviewTarget,
+} from "./preview-location";
+
+type PreviewState = {
+  buffer: number;
+  window: number;
+  path: string;
+  /** Stable path+focus identity for the content currently painted. */
+  identity: string;
+  focusLine?: number;
+};
 
 type FloatState = {
   namespace: number;
@@ -22,6 +52,8 @@ type FloatState = {
   targetBuffer: number;
   targetMode: string;
   targetWindow: number;
+  layout: PickerLayout;
+  preview?: PreviewState;
 };
 
 type MatchedItem = {
@@ -43,6 +75,7 @@ const PICKER_ZINDEX = 40;
 function pickerBorders(rounded: boolean): {
   prompt: string[];
   results: string[];
+  preview: string[];
 } {
   const [topLeft, topRight, bottomRight, bottomLeft] = rounded
     ? (["╭", "╮", "╯", "╰"] as const)
@@ -50,6 +83,25 @@ function pickerBorders(rounded: boolean): {
   return {
     prompt: [topLeft, "─", topRight, "│", "┤", "─", "├", "│"],
     results: ["├", "─", "┤", "│", bottomRight, "─", bottomLeft, "│"],
+    preview: [topLeft, "─", topRight, "│", bottomRight, "─", bottomLeft, "│"],
+  };
+}
+
+function floatConfig(
+  geometry: { row: number; col: number; width: number; height: number },
+  border: string[],
+  extra: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    relative: "editor",
+    row: geometry.row,
+    col: geometry.col,
+    width: geometry.width,
+    height: geometry.height,
+    style: "minimal",
+    border,
+    zindex: PICKER_ZINDEX,
+    ...extra,
   };
 }
 
@@ -64,6 +116,7 @@ export class ListPicker implements Disposable {
   private selected = 0;
   private input = "";
   private generation = 0;
+  private previewGeneration = 0;
   private tokenSource: CancellationTokenSource | undefined;
   private task: ListTask | undefined;
   private pollTimer: NodeJS.Timeout | undefined;
@@ -71,6 +124,8 @@ export class ListPicker implements Disposable {
   private filterTimer: NodeJS.Timeout | undefined;
   private limit = DEFAULT_LIMIT;
   private visibleLimit = DEFAULT_VISIBLE_ITEMS;
+  private previewEnabled = true;
+  private previewMinColumns = PREVIEW_MIN_COLUMNS;
 
   async show(name: string, args: string[] = []): Promise<void> {
     await this.open(name, args, "");
@@ -92,6 +147,11 @@ export class ListPicker implements Disposable {
     this.visibleLimit = Math.max(
       20,
       config.get<number>("visibleItems", DEFAULT_VISIBLE_ITEMS),
+    );
+    this.previewEnabled = config.get<boolean>("preview.enable", true);
+    this.previewMinColumns = Math.max(
+      LAYOUT_MIN_COLUMNS_FLOOR,
+      config.get<number>("preview.minColumns", PREVIEW_MIN_COLUMNS),
     );
     this.name = name;
     this.source = getListSource(name);
@@ -118,6 +178,7 @@ export class ListPicker implements Disposable {
 
   async close(): Promise<void> {
     this.cancelProducer();
+    this.previewGeneration++;
     if (this.pollTimer) clearInterval(this.pollTimer);
     if (this.renderTimer) clearTimeout(this.renderTimer);
     if (this.filterTimer) clearTimeout(this.filterTimer);
@@ -128,11 +189,27 @@ export class ListPicker implements Disposable {
     this.state = undefined;
     if (!state) return;
     await workspace.nvim.command("stopinsert");
-    for (const winid of [state.promptWindow, state.resultsWindow]) {
+    const windows = [
+      state.promptWindow,
+      state.resultsWindow,
+      state.preview?.window,
+    ].filter((winid): winid is number => winid != null);
+    for (const winid of windows) {
       const valid = (await workspace.nvim.call("nvim_win_is_valid", [
         winid,
       ])) as boolean;
       if (valid) await workspace.nvim.call("nvim_win_close", [winid, true]);
+    }
+    if (state.preview) {
+      const bufValid = (await workspace.nvim.call("nvim_buf_is_valid", [
+        state.preview.buffer,
+      ])) as boolean;
+      if (bufValid) {
+        await workspace.nvim.call("nvim_buf_delete", [
+          state.preview.buffer,
+          { force: true },
+        ]);
+      }
     }
     const targetValid = (await workspace.nvim.call("nvim_win_is_valid", [
       state.targetWindow,
@@ -376,6 +453,266 @@ export class ListPicker implements Disposable {
       }
     }
     await workspace.nvim.resumeNotification(false);
+    await this.updatePreview();
+  }
+
+  private async updatePreview(): Promise<void> {
+    const state = this.state;
+    if (!state) return;
+    const generation = ++this.previewGeneration;
+    const item = this.visibleItems[this.selected]?.item;
+    const target = item
+      ? resolvePreviewTarget(item.location, workspace.cwd)
+      : undefined;
+    const columns = (await workspace.nvim.getOption("columns")) as number;
+    const lines = (await workspace.nvim.getOption("lines")) as number;
+    if (generation !== this.previewGeneration || !this.state) return;
+
+    const wideEnough =
+      this.previewEnabled &&
+      canShowPreviewPane(columns, this.previewMinColumns);
+    if (!wideEnough || !target) {
+      if (state.preview || state.layout.preview) {
+        await this.hidePreview(columns, lines);
+      }
+      return;
+    }
+
+    const identity = previewIdentity(target);
+    const layout = computePickerLayout({
+      columns,
+      lines,
+      showPreview: true,
+      minColumns: this.previewMinColumns,
+    });
+    // Same selection already painted: skip reread/repaint. Still reflow when
+    // editor geometry or settings change the computed layout.
+    if (state.preview?.identity === identity) {
+      if (pickerLayoutsEqual(state.layout, layout)) return;
+      await this.applyLayout(layout, target.path);
+      if (generation !== this.previewGeneration || !this.state) return;
+      return;
+    }
+
+    const content = await readPreviewContent(target.path, {
+      maxBytes: PREVIEW_MAX_BYTES,
+      maxLines: PREVIEW_MAX_LINES,
+    });
+    if (generation !== this.previewGeneration || !this.state) return;
+    // Missing files, directories, and read errors are not previewable.
+    if (content.kind === "unavailable") {
+      if (this.state.preview || this.state.layout.preview) {
+        await this.hidePreview(columns, lines);
+      }
+      return;
+    }
+
+    // Mount/reflow before painting so the pane size stays stable while lines load.
+    await this.applyLayout(layout, target.path);
+    if (generation !== this.previewGeneration || !this.state?.preview) return;
+
+    const textLines = content.kind === "text" ? content.lines : [];
+    const focusLine = resolveFocusLine(textLines, target);
+    const display = previewStatusLines(content);
+    const detected =
+      content.kind === "text" && !content.filetype
+        ? await this.detectFiletype(target.path)
+        : undefined;
+    if (generation !== this.previewGeneration || !this.state?.preview) return;
+    await this.writePreviewBuffer(
+      this.state.preview.buffer,
+      display,
+      resolvePreviewFiletype(content, detected),
+    );
+    if (generation !== this.previewGeneration || !this.state?.preview) return;
+    await this.focusPreviewLine(this.state.preview, focusLine, display.length);
+    this.state.preview.path = target.path;
+    this.state.preview.identity = identity;
+    this.state.preview.focusLine = focusLine;
+  }
+
+  private async hidePreview(columns: number, lines: number): Promise<void> {
+    const state = this.state;
+    if (!state) return;
+    if (state.preview) {
+      const winValid = (await workspace.nvim.call("nvim_win_is_valid", [
+        state.preview.window,
+      ])) as boolean;
+      if (winValid) {
+        await workspace.nvim.call("nvim_win_close", [state.preview.window, true]);
+      }
+      const bufValid = (await workspace.nvim.call("nvim_buf_is_valid", [
+        state.preview.buffer,
+      ])) as boolean;
+      if (bufValid) {
+        await workspace.nvim.call("nvim_buf_delete", [
+          state.preview.buffer,
+          { force: true },
+        ]);
+      }
+      state.preview = undefined;
+    }
+    const layout = computePickerLayout({
+      columns,
+      lines,
+      showPreview: false,
+      minColumns: this.previewMinColumns,
+    });
+    await this.applyLayout(layout);
+  }
+
+  private async applyLayout(
+    layout: PickerLayout,
+    previewPath?: string,
+  ): Promise<void> {
+    const state = this.state;
+    if (!state) return;
+    const rounded = workspace
+      .getConfiguration("dialog")
+      .get<boolean>("rounded", true);
+    const borders = pickerBorders(rounded);
+    state.layout = layout;
+
+    await workspace.nvim.call("nvim_win_set_config", [
+      state.promptWindow,
+      floatConfig(layout.prompt, borders.prompt, {
+        title: ` ${this.name ?? ""} `,
+        title_pos: "left",
+      }),
+    ]);
+    await workspace.nvim.call("nvim_win_set_config", [
+      state.resultsWindow,
+      floatConfig(layout.results, borders.results, { focusable: false }),
+    ]);
+
+    if (!layout.preview) return;
+
+    const title = previewPath ? ` ${path.basename(previewPath)} ` : " preview ";
+    if (state.preview) {
+      await workspace.nvim.call("nvim_win_set_config", [
+        state.preview.window,
+        floatConfig(layout.preview, borders.preview, {
+          focusable: false,
+          title,
+          title_pos: "left",
+        }),
+      ]);
+      return;
+    }
+
+    const buffer = (await workspace.nvim.call("nvim_create_buf", [
+      false,
+      true,
+    ])) as number;
+    await this.configurePreviewBuffer(buffer);
+    const previewWindow = (await workspace.nvim.call("nvim_open_win", [
+      buffer,
+      false,
+      floatConfig(layout.preview, borders.preview, {
+        focusable: false,
+        title,
+        title_pos: "left",
+      }),
+    ])) as number;
+    await workspace.nvim.call("nvim_win_set_option", [
+      previewWindow,
+      "winhighlight",
+      "NormalFloat:NormalFloat,FloatBorder:CocUiPickerBorder,FloatTitle:CocUiPickerBorder",
+    ]);
+    await workspace.nvim.call("nvim_win_set_option", [
+      previewWindow,
+      "wrap",
+      false,
+    ]);
+    await workspace.nvim.call("nvim_win_set_option", [
+      previewWindow,
+      "cursorline",
+      false,
+    ]);
+    state.preview = {
+      buffer,
+      window: previewWindow,
+      path: previewPath ?? "",
+      identity: "",
+    };
+  }
+
+  private async configurePreviewBuffer(buffer: number): Promise<void> {
+    await workspace.nvim.call("nvim_buf_set_option", [buffer, "buftype", "nofile"]);
+    await workspace.nvim.call("nvim_buf_set_option", [buffer, "bufhidden", "wipe"]);
+    await workspace.nvim.call("nvim_buf_set_option", [buffer, "swapfile", false]);
+    await workspace.nvim.call("nvim_buf_set_option", [buffer, "modifiable", false]);
+    await workspace.nvim.call("nvim_buf_set_option", [buffer, "readonly", true]);
+    await workspace.nvim.call("nvim_buf_set_option", [buffer, "undolevels", -1]);
+  }
+
+  private async writePreviewBuffer(
+    buffer: number,
+    lines: string[],
+    filetype: string,
+  ): Promise<void> {
+    await workspace.nvim.pauseNotification();
+    workspace.nvim.call("nvim_buf_set_option", [buffer, "modifiable", true], true);
+    workspace.nvim.call("nvim_buf_set_option", [buffer, "readonly", false], true);
+    workspace.nvim.call(
+      "nvim_buf_set_lines",
+      [buffer, 0, -1, false, lines.length ? lines : [""]],
+      true,
+    );
+    workspace.nvim.call("nvim_buf_set_option", [buffer, "modifiable", false], true);
+    workspace.nvim.call("nvim_buf_set_option", [buffer, "readonly", true], true);
+    // Always set filetype (including "") so a prior ft does not leak across items.
+    workspace.nvim.call("nvim_buf_set_option", [buffer, "filetype", filetype], true);
+    await workspace.nvim.resumeNotification(false);
+  }
+
+  private async detectFiletype(filePath: string): Promise<string | undefined> {
+    try {
+      const detected = (await workspace.nvim.lua(
+        `return vim.filetype.match({ filename = ... })`,
+        [filePath],
+      )) as unknown;
+      return typeof detected === "string" && detected ? detected : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async focusPreviewLine(
+    preview: PreviewState,
+    focusLine: number | undefined,
+    lineCount: number,
+  ): Promise<void> {
+    const state = this.state;
+    if (!state) return;
+    await workspace.nvim.call("nvim_buf_clear_namespace", [
+      preview.buffer,
+      state.namespace,
+      0,
+      -1,
+    ]);
+    if (!focusLine || lineCount < 1) return;
+    const line = Math.max(1, Math.min(focusLine, lineCount));
+    await workspace.nvim.call("nvim_buf_add_highlight", [
+      preview.buffer,
+      state.namespace,
+      "CursorLine",
+      line - 1,
+      0,
+      -1,
+    ]);
+    await workspace.nvim.lua(
+      `
+      local win, line = ...
+      if vim.api.nvim_win_is_valid(win) then
+        vim.api.nvim_win_call(win, function()
+          vim.api.nvim_win_set_cursor(win, { line, 0 })
+          vim.cmd('normal! zz')
+        end)
+      end
+      `,
+      [preview.window, line],
+    );
   }
 
   private context(input: string): ListContext {
@@ -413,16 +750,12 @@ export class ListPicker implements Disposable {
     await this.configureHighlights();
     const columns = (await workspace.nvim.getOption("columns")) as number;
     const lines = (await workspace.nvim.getOption("lines")) as number;
-    const width = Math.min(
-      Math.max(1, columns - 4),
-      Math.max(20, Math.floor(columns * 0.72)),
-    );
-    const height = Math.min(
-      Math.max(1, lines - 7),
-      Math.max(5, Math.floor(lines * 0.55)),
-    );
-    const col = Math.max(0, Math.floor((columns - width) / 2));
-    const row = Math.max(0, Math.floor((lines - height - 1) / 3));
+    const layout = computePickerLayout({
+      columns,
+      lines,
+      showPreview: false,
+      minColumns: this.previewMinColumns,
+    });
     const namespace = (await workspace.nvim.call("nvim_create_namespace", [
       "coc-ui-picker",
     ])) as number;
@@ -434,33 +767,15 @@ export class ListPicker implements Disposable {
     const promptWindow = (await workspace.nvim.call("nvim_open_win", [
       promptBuffer,
       true,
-      {
-        relative: "editor",
-        row,
-        col,
-        width,
-        height: 1,
-        style: "minimal",
-        border: borders.prompt,
+      floatConfig(layout.prompt, borders.prompt, {
         title: ` ${name} `,
         title_pos: "left",
-        zindex: PICKER_ZINDEX,
-      },
+      }),
     ])) as number;
     const resultsWindow = (await workspace.nvim.call("nvim_open_win", [
       resultsBuffer,
       false,
-      {
-        relative: "editor",
-        row: row + 2,
-        col,
-        width,
-        height,
-        style: "minimal",
-        border: borders.results,
-        focusable: false,
-        zindex: PICKER_ZINDEX,
-      },
+      floatConfig(layout.results, borders.results, { focusable: false }),
     ])) as number;
     for (const buffer of [promptBuffer, resultsBuffer]) {
       await workspace.nvim.call("nvim_buf_set_option", [buffer, "buftype", "nofile"]);
@@ -495,6 +810,7 @@ export class ListPicker implements Disposable {
       targetBuffer,
       targetMode,
       targetWindow,
+      layout,
     };
   }
 
@@ -536,6 +852,18 @@ export class ListPicker implements Disposable {
       void workspace.nvim.call("nvim_buf_set_keymap", [state.promptBuffer, "i", key, `<Cmd>CocCommand ${command}<CR>`, { noremap: true, silent: true, nowait: true }]);
     }
   }
+}
+
+/** Floor so a misconfigured minColumns cannot collapse the threshold to zero. */
+const LAYOUT_MIN_COLUMNS_FLOOR = 40;
+
+function resolveFocusLine(
+  lines: readonly string[],
+  target: PreviewTarget,
+): number | undefined {
+  if (target.line != null) return target.line;
+  if (target.matchLine) return findMatchLine(lines, target.matchLine);
+  return undefined;
 }
 
 let activePicker: ListPicker | undefined;

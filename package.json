@@ -12,7 +12,8 @@
   "scripts": {
     "build": "tsc --project tsconfig.build.json && node esbuild.mjs",
     "prepare": "node esbuild.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "tsc --project tsconfig.test.json && node --test .tmp/test/picker/preview.test.js; status=$?; rm -rf .tmp; exit $status"
   },
   "activationEvents": [
     "*"
@@ -129,6 +130,17 @@
           "default": 200,
           "minimum": 20,
           "description": "Maximum items rendered around the current picker selection."
+        },
+        "ui.picker.preview.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a side file preview in the floating list picker when the selected item resolves to a local file and the editor is wide enough."
+        },
+        "ui.picker.preview.minColumns": {
+          "type": "number",
+          "default": 120,
+          "minimum": 40,
+          "description": "Minimum editor columns required before the floating list picker mounts a side file preview."
         }
       }
     }
