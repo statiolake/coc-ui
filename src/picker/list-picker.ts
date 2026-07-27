@@ -434,7 +434,7 @@ export class ListPicker implements Disposable {
     workspace.nvim.call("nvim_buf_set_option", [state.resultsBuffer, "modifiable", false], true);
     workspace.nvim.call("nvim_buf_clear_namespace", [state.resultsBuffer, state.namespace, 0, -1], true);
     if (page.length) {
-      workspace.nvim.call("nvim_buf_add_highlight", [state.resultsBuffer, state.namespace, "CursorLine", this.selected - start, 0, -1], true);
+      workspace.nvim.call("nvim_buf_add_highlight", [state.resultsBuffer, state.namespace, "PmenuSel", this.selected - start, 0, -1], true);
       for (const [line, matched] of page.entries()) {
         if (!matched.positions) continue;
         for (const [startColumn, endColumn] of this.fuzzyMatch.matchSpans(
