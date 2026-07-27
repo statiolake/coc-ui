@@ -700,7 +700,7 @@ export class ListPicker implements Disposable {
     await workspace.nvim.call("nvim_buf_add_highlight", [
       preview.buffer,
       state.namespace,
-      "CursorLine",
+      "PmenuSel",
       line - 1,
       0,
       -1,
