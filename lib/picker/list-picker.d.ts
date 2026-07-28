@@ -39,6 +39,7 @@ export declare class ListPicker implements Disposable {
     private pollInput;
     private scheduleRender;
     private render;
+    private revealResultsLine;
     private updatePreview;
     private hidePreview;
     private applyLayout;

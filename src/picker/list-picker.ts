@@ -459,7 +459,27 @@ export class ListPicker implements Disposable {
       }
     }
     await workspace.nvim.resumeNotification(false);
+    if (page.length) {
+      await this.revealResultsLine(this.selected - start + 1);
+    }
     await this.updatePreview();
+  }
+
+  private async revealResultsLine(line: number): Promise<void> {
+    const state = this.state;
+    if (!state) return;
+    await workspace.nvim.lua(
+      `
+      local win, line = ...
+      if vim.api.nvim_win_is_valid(win) then
+        vim.api.nvim_win_call(win, function()
+          vim.api.nvim_win_set_cursor(win, { line, 0 })
+          vim.cmd('normal! zz')
+        end)
+      end
+      `,
+      [state.resultsWindow, line],
+    );
   }
 
   private async updatePreview(): Promise<void> {
