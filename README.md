@@ -101,7 +101,11 @@ preview on the right. Preview eligibility is item-driven (string URI, LSP
 `Location`, or `LocationWithLine`), not source-name-driven. Showing or hiding
 the preview never changes the picker's outer size at a given editor size; below
 the column threshold the list and prompt occupy the full rectangle. Disable with
-`ui.picker.preview.enable`.
+`ui.picker.preview.enable`. A location with a target line is streamed until that
+line and retains only a bounded window around it, so targets near the end of
+large files remain previewable without loading the whole file into memory.
+Long path labels collapse unmatched hierarchy to `/../`; components containing
+fuzzy matches and their highlights remain visible.
 
 Pressing `<Tab>` opens coc.nvim's native menu picker for the selected source
 item's actions from `IList.actions`. Canceling the menu leaves the floating

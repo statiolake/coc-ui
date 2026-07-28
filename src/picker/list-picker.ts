@@ -13,6 +13,7 @@ import {
 } from "coc.nvim";
 import * as path from "node:path";
 import { getListSource } from "./list-source";
+import { formatPickerItem } from "./item-display";
 import {
   PREVIEW_MAX_BYTES,
   PREVIEW_MAX_LINES,
@@ -28,10 +29,8 @@ import {
   type PickerLayout,
 } from "./preview-layout";
 import {
-  findMatchLine,
   previewIdentity,
   resolvePreviewTarget,
-  type PreviewTarget,
 } from "./preview-location";
 
 type PreviewState = {
@@ -117,6 +116,7 @@ export class ListPicker implements Disposable {
   private input = "";
   private generation = 0;
   private previewGeneration = 0;
+  private previewTokenSource: CancellationTokenSource | undefined;
   private tokenSource: CancellationTokenSource | undefined;
   private task: ListTask | undefined;
   private pollTimer: NodeJS.Timeout | undefined;
@@ -179,6 +179,9 @@ export class ListPicker implements Disposable {
   async close(): Promise<void> {
     this.cancelProducer();
     this.previewGeneration++;
+    this.previewTokenSource?.cancel();
+    this.previewTokenSource?.dispose();
+    this.previewTokenSource = undefined;
     if (this.pollTimer) clearInterval(this.pollTimer);
     if (this.renderTimer) clearTimeout(this.renderTimer);
     if (this.filterTimer) clearTimeout(this.filterTimer);
@@ -427,7 +430,10 @@ export class ListPicker implements Disposable {
       Math.min(this.selected - half, this.visibleItems.length - this.visibleLimit),
     );
     const page = this.visibleItems.slice(start, start + this.visibleLimit);
-    const lines = page.map(({ item }) => item.label.replace(/\r?\n/g, " "));
+    const displayItems = page.map(({ item, positions }) =>
+      formatPickerItem(item.label, positions, state.layout.results.width),
+    );
+    const lines = displayItems.map(({ text }) => text);
     await workspace.nvim.pauseNotification();
     workspace.nvim.call("nvim_buf_set_option", [state.resultsBuffer, "modifiable", true], true);
     workspace.nvim.call("nvim_buf_set_lines", [state.resultsBuffer, 0, -1, false, lines.length ? lines : [""]], true);
@@ -435,11 +441,11 @@ export class ListPicker implements Disposable {
     workspace.nvim.call("nvim_buf_clear_namespace", [state.resultsBuffer, state.namespace, 0, -1], true);
     if (page.length) {
       workspace.nvim.call("nvim_buf_add_highlight", [state.resultsBuffer, state.namespace, "PmenuSel", this.selected - start, 0, -1], true);
-      for (const [line, matched] of page.entries()) {
-        if (!matched.positions) continue;
+      for (const [line, displayed] of displayItems.entries()) {
+        if (!displayed.positions) continue;
         for (const [startColumn, endColumn] of this.fuzzyMatch.matchSpans(
           lines[line],
-          matched.positions,
+          displayed.positions,
         )) {
           workspace.nvim.call("nvim_buf_add_highlight", [
             state.resultsBuffer,
@@ -459,6 +465,10 @@ export class ListPicker implements Disposable {
   private async updatePreview(): Promise<void> {
     const state = this.state;
     if (!state) return;
+    this.previewTokenSource?.cancel();
+    this.previewTokenSource?.dispose();
+    const previewTokenSource = new CancellationTokenSource();
+    this.previewTokenSource = previewTokenSource;
     const generation = ++this.previewGeneration;
     const item = this.visibleItems[this.selected]?.item;
     const target = item
@@ -498,6 +508,9 @@ export class ListPicker implements Disposable {
     const content = await readPreviewContent(target.path, {
       maxBytes: PREVIEW_MAX_BYTES,
       maxLines: PREVIEW_MAX_LINES,
+      cancellation: previewTokenSource.token,
+      targetLine: target.line,
+      matchLine: target.matchLine,
     });
     if (generation !== this.previewGeneration || !this.state) return;
     // Missing files, directories, and read errors are not previewable.
@@ -513,8 +526,8 @@ export class ListPicker implements Disposable {
     await this.applyLayout(layout, target.path);
     if (generation !== this.previewGeneration || !this.state?.preview) return;
 
-    const textLines = content.kind === "text" ? content.lines : [];
-    const focusLine = resolveFocusLine(textLines, target);
+    const focusLine =
+      content.kind === "text" ? content.focusLine : undefined;
     const display = previewStatusLines(content);
     const detected =
       content.kind === "text" && !content.filetype
@@ -575,7 +588,10 @@ export class ListPicker implements Disposable {
       .getConfiguration("dialog")
       .get<boolean>("rounded", true);
     const borders = pickerBorders(rounded);
+    const resultsWidthChanged =
+      state.layout.results.width !== layout.results.width;
     state.layout = layout;
+    if (resultsWidthChanged) this.scheduleRender();
 
     await workspace.nvim.call("nvim_win_set_config", [
       state.promptWindow,
@@ -860,15 +876,6 @@ export class ListPicker implements Disposable {
 
 /** Floor so a misconfigured minColumns cannot collapse the threshold to zero. */
 const LAYOUT_MIN_COLUMNS_FLOOR = 40;
-
-function resolveFocusLine(
-  lines: readonly string[],
-  target: PreviewTarget,
-): number | undefined {
-  if (target.line != null) return target.line;
-  if (target.matchLine) return findMatchLine(lines, target.matchLine);
-  return undefined;
-}
 
 let activePicker: ListPicker | undefined;
 

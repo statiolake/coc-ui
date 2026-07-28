@@ -11,6 +11,7 @@ export declare class ListPicker implements Disposable {
     private input;
     private generation;
     private previewGeneration;
+    private previewTokenSource;
     private tokenSource;
     private task;
     private pollTimer;

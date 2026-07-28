@@ -7,12 +7,14 @@ import { describe, it } from "node:test";
 import {
   guessFiletype,
   isBinaryBuffer,
+  PREVIEW_MAX_BYTES,
   previewStatusLines,
   readPreviewContent,
   resolvePreviewFiletype,
   splitPreviewLines,
   PREVIEW_MAX_LINES,
 } from "./preview-content";
+import { formatPickerItem } from "./item-display";
 import {
   canShowPreviewPane,
   computePickerLayout,
@@ -323,6 +325,7 @@ describe("preview-content", () => {
         kind: "text",
         lines: ["x"],
         truncated: false,
+        startLine: 1,
         filetype: "typescript",
       }),
       "typescript",
@@ -332,6 +335,7 @@ describe("preview-content", () => {
         kind: "text",
         lines: ["x"],
         truncated: false,
+        startLine: 1,
       }),
       "",
     );
@@ -341,6 +345,7 @@ describe("preview-content", () => {
           kind: "text",
           lines: ["x"],
           truncated: false,
+          startLine: 1,
         },
         "zig",
       ),
@@ -392,5 +397,101 @@ describe("preview-content", () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  it("retains only the window around a target beyond the head byte cap", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "coc-ui-preview-"));
+    try {
+      const file = path.join(dir, "large.ts");
+      const source = Array.from(
+        { length: 800 },
+        (_, index) => `line-${index + 1} ${"x".repeat(1024)}`,
+      ).join("\n");
+      assert.ok(Buffer.byteLength(source) > PREVIEW_MAX_BYTES);
+      await writeFile(file, source);
+
+      const content = await readPreviewContent(file, {
+        targetLine: 700,
+        maxLines: 5,
+      });
+      assert.equal(content.kind, "text");
+      if (content.kind === "text") {
+        assert.equal(content.startLine, 698);
+        assert.equal(content.focusLine, 3);
+        assert.deepEqual(
+          content.lines.map((line) => line.slice(0, line.indexOf(" "))),
+          ["line-698", "line-699", "line-700", "line-701", "line-702"],
+        );
+        assert.equal(content.truncated, true);
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("searches LocationWithLine text to the end and prefers an exact match", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "coc-ui-preview-"));
+    try {
+      const file = path.join(dir, "matches.txt");
+      const lines = Array.from({ length: 700 }, (_, index) => `line ${index + 1}`);
+      lines[499] = "prefix wanted suffix";
+      lines[649] = "wanted";
+      await writeFile(file, lines.join("\n"));
+
+      const content = await readPreviewContent(file, {
+        matchLine: "wanted",
+        maxLines: 3,
+      });
+      assert.equal(content.kind, "text");
+      if (content.kind === "text") {
+        assert.equal(content.startLine, 649);
+        assert.equal(content.focusLine, 2);
+        assert.deepEqual(content.lines, ["line 649", "wanted", "line 651"]);
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("picker item display", () => {
+  it("elides unmatched path hierarchy and remaps fuzzy positions", () => {
+    const label = "/Users/me/project/src/features/picker.ts";
+    const sourcePositions = [
+      ...Array.from({ length: 3 }, (_, offset) => label.indexOf("src") + offset),
+      ...Array.from(
+        { length: 6 },
+        (_, offset) => label.indexOf("picker") + offset,
+      ),
+    ];
+    const display = formatPickerItem(
+      label,
+      Uint32Array.from(sourcePositions),
+      20,
+    );
+    assert.equal(display.text, "/../src/../picker.ts");
+    assert.ok(display.positions);
+    assert.equal(
+      Array.from(display.positions, (position) => display.text[position]).join(""),
+      "srcpicker",
+    );
+  });
+
+  it("keeps short labels unchanged and compacts long paths without a query", () => {
+    assert.deepEqual(formatPickerItem("src/a.ts", undefined, 20), {
+      text: "src/a.ts",
+      positions: undefined,
+    });
+    assert.deepEqual(
+      formatPickerItem("/Users/me/project/src/a.ts", undefined, 10),
+      { text: "/../a.ts", positions: undefined },
+    );
+    assert.deepEqual(
+      formatPickerItem("https://example.com/very/long/path", undefined, 10),
+      {
+        text: "https://example.com/very/long/path",
+        positions: undefined,
+      },
+    );
   });
 });

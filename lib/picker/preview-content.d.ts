@@ -6,12 +6,31 @@ export type PreviewContent = {
     kind: "text";
     lines: string[];
     truncated: boolean;
+    /** 1-based source line represented by lines[0]. */
+    startLine: number;
+    /** 1-based line within `lines` to focus, when the target was found. */
+    focusLine?: number;
     filetype?: string;
 } | {
     kind: "binary";
 } | {
     kind: "unavailable";
     reason: string;
+};
+export type PreviewReadOptions = {
+    maxBytes?: number;
+    maxLines?: number;
+    cancellation?: PreviewReadCancellation;
+    /** 1-based source line around which the retained window is centered. */
+    targetLine?: number;
+    /** Exact, then partial, line match around which the window is centered. */
+    matchLine?: string;
+};
+export type PreviewReadCancellation = {
+    readonly isCancellationRequested: boolean;
+    onCancellationRequested(listener: () => void): {
+        dispose(): void;
+    };
 };
 /** Best-effort filetype from path extension (no buffer load). */
 export declare function guessFiletype(filePath: string): string | undefined;
@@ -26,13 +45,11 @@ export declare function splitPreviewLines(text: string): {
     truncated: boolean;
 };
 /**
- * Boundedly read a local file for picker preview. Never loads the full file
- * when it exceeds PREVIEW_MAX_BYTES. Detects NUL/binary content.
+ * Read a local file for picker preview without loading it wholesale. Plain
+ * previews retain the bounded head; focused previews stream until their target
+ * and retain only the surrounding line window. Detects NUL/binary content.
  */
-export declare function readPreviewContent(filePath: string, options?: {
-    maxBytes?: number;
-    maxLines?: number;
-}): Promise<PreviewContent>;
+export declare function readPreviewContent(filePath: string, options?: PreviewReadOptions): Promise<PreviewContent>;
 export declare function previewStatusLines(content: PreviewContent): string[];
 /**
  * Filetype option for the reusable preview buffer.

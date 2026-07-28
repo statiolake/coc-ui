@@ -1,5 +1,7 @@
+import { createReadStream } from "node:fs";
 import { open, stat } from "node:fs/promises";
 import * as path from "node:path";
+import { createInterface } from "node:readline";
 
 /** Hard cap on bytes read from a preview candidate. */
 export const PREVIEW_MAX_BYTES = 512 * 1024;
@@ -7,9 +9,33 @@ export const PREVIEW_MAX_BYTES = 512 * 1024;
 export const PREVIEW_MAX_LINES = 400;
 
 export type PreviewContent =
-  | { kind: "text"; lines: string[]; truncated: boolean; filetype?: string }
+  | {
+      kind: "text";
+      lines: string[];
+      truncated: boolean;
+      /** 1-based source line represented by lines[0]. */
+      startLine: number;
+      /** 1-based line within `lines` to focus, when the target was found. */
+      focusLine?: number;
+      filetype?: string;
+    }
   | { kind: "binary" }
   | { kind: "unavailable"; reason: string };
+
+export type PreviewReadOptions = {
+  maxBytes?: number;
+  maxLines?: number;
+  cancellation?: PreviewReadCancellation;
+  /** 1-based source line around which the retained window is centered. */
+  targetLine?: number;
+  /** Exact, then partial, line match around which the window is centered. */
+  matchLine?: string;
+};
+
+export type PreviewReadCancellation = {
+  readonly isCancellationRequested: boolean;
+  onCancellationRequested(listener: () => void): { dispose(): void };
+};
 
 const EXT_TO_FILETYPE: Record<string, string> = {
   c: "c",
@@ -71,19 +97,28 @@ export function splitPreviewLines(text: string): {
 }
 
 /**
- * Boundedly read a local file for picker preview. Never loads the full file
- * when it exceeds PREVIEW_MAX_BYTES. Detects NUL/binary content.
+ * Read a local file for picker preview without loading it wholesale. Plain
+ * previews retain the bounded head; focused previews stream until their target
+ * and retain only the surrounding line window. Detects NUL/binary content.
  */
 export async function readPreviewContent(
   filePath: string,
-  options: { maxBytes?: number; maxLines?: number } = {},
+  options: PreviewReadOptions = {},
 ): Promise<PreviewContent> {
   const maxBytes = options.maxBytes ?? PREVIEW_MAX_BYTES;
-  const maxLines = options.maxLines ?? PREVIEW_MAX_LINES;
+  const maxLines = Math.max(1, options.maxLines ?? PREVIEW_MAX_LINES);
   try {
     const info = await stat(filePath);
     if (!info.isFile()) {
       return { kind: "unavailable", reason: "Not a regular file" };
+    }
+    if (options.targetLine != null || options.matchLine) {
+      return await readFocusedPreviewContent(filePath, {
+        maxLines,
+        cancellation: options.cancellation,
+        targetLine: options.targetLine,
+        matchLine: options.matchLine,
+      });
     }
     const toRead = Math.min(info.size, maxBytes);
     if (toRead === 0) {
@@ -91,6 +126,7 @@ export async function readPreviewContent(
         kind: "text",
         lines: [""],
         truncated: false,
+        startLine: 1,
         filetype: guessFiletype(filePath),
       };
     }
@@ -111,6 +147,7 @@ export async function readPreviewContent(
         kind: "text",
         lines,
         truncated,
+        startLine: 1,
         filetype: guessFiletype(filePath),
       };
     } finally {
@@ -119,6 +156,139 @@ export async function readPreviewContent(
   } catch {
     return { kind: "unavailable", reason: "Preview unavailable" };
   }
+}
+
+type FocusedReadOptions = {
+  maxLines: number;
+  cancellation?: PreviewReadCancellation;
+  targetLine?: number;
+  matchLine?: string;
+};
+
+type RetainedWindow = {
+  lines: string[];
+  startLine: number;
+  focusLine: number;
+  endLine: number;
+};
+
+/**
+ * Scan a file without retaining it wholesale and keep only a bounded window
+ * around a requested source line. This deliberately has no total-byte cap:
+ * the scan may reach the end of a large file, while memory stays bounded by
+ * maxLines (apart from Node's current decoded line).
+ */
+async function readFocusedPreviewContent(
+  filePath: string,
+  options: FocusedReadOptions,
+): Promise<PreviewContent> {
+  const beforeCount = Math.floor((options.maxLines - 1) / 2);
+  const stream = createReadStream(filePath, { encoding: "utf8" });
+  const reader = createInterface({ input: stream, crlfDelay: Infinity });
+  const abort = (): void => {
+    stream.destroy();
+  };
+  const cancellation = options.cancellation?.isCancellationRequested
+    ? undefined
+    : options.cancellation?.onCancellationRequested(abort);
+  if (options.cancellation?.isCancellationRequested) abort();
+  const before: string[] = [];
+  const head: string[] = [];
+  let lineNumber = 0;
+  let exact: RetainedWindow | undefined;
+  let partial: RetainedWindow | undefined;
+  let reachedEof = true;
+
+  try {
+    for await (const line of reader) {
+      lineNumber++;
+      if (line.includes("\0")) {
+        return { kind: "binary" };
+      }
+      if (
+        options.targetLine == null &&
+        !partial &&
+        !exact &&
+        head.length < options.maxLines
+      ) {
+        head.push(line);
+      }
+
+      if (exact) {
+        if (exact.lines.length < options.maxLines) {
+          exact.lines.push(line);
+          exact.endLine = lineNumber;
+          continue;
+        }
+        reachedEof = false;
+        break;
+      }
+
+      if (partial && partial.lines.length < options.maxLines) {
+        partial.lines.push(line);
+        partial.endLine = lineNumber;
+      }
+
+      const targetMatches =
+        options.targetLine != null &&
+        lineNumber === Math.max(1, Math.floor(options.targetLine));
+      const exactMatches =
+        options.matchLine != null && line === options.matchLine;
+      const partialMatches =
+        options.matchLine != null &&
+        options.matchLine.length > 0 &&
+        line.includes(options.matchLine);
+
+      if (targetMatches || exactMatches) {
+        exact = makeRetainedWindow(before, line, lineNumber);
+        head.length = 0;
+      } else if (!partial && partialMatches) {
+        partial = makeRetainedWindow(before, line, lineNumber);
+        head.length = 0;
+      }
+
+      before.push(line);
+      if (before.length > beforeCount) before.shift();
+    }
+  } finally {
+    cancellation?.dispose();
+    reader.close();
+    stream.destroy();
+  }
+
+  const retained = exact ?? partial;
+  if (retained) {
+    return {
+      kind: "text",
+      lines: retained.lines,
+      startLine: retained.startLine,
+      focusLine: retained.focusLine,
+      truncated: retained.startLine > 1 || !reachedEof || retained.endLine < lineNumber,
+      filetype: guessFiletype(filePath),
+    };
+  }
+
+  const fallback = head.length ? head : before;
+  return {
+    kind: "text",
+    lines: fallback.length ? fallback : [""],
+    startLine: fallback.length ? lineNumber - fallback.length + 1 : 1,
+    truncated: lineNumber > fallback.length,
+    filetype: guessFiletype(filePath),
+  };
+}
+
+function makeRetainedWindow(
+  before: readonly string[],
+  line: string,
+  lineNumber: number,
+): RetainedWindow {
+  return {
+    lines: [...before, line],
+    startLine: lineNumber - before.length,
+    focusLine: before.length + 1,
+    endLine: lineNumber,
+  };
 }
 
 export function previewStatusLines(content: PreviewContent): string[] {
